@@ -6,9 +6,14 @@
         <el-button :icon="ArrowLeft" @click="goBack">返回</el-button>
         <h1 class="page-title ml-4">分析结果 - {{ currentPatient?.name }}</h1>
       </div>
-      <el-button type="primary" :icon="Download" @click="exportPDF">
-        导出 PDF 报告
-      </el-button>
+      <div class="flex items-center gap-2">
+        <el-button type="primary" :icon="Download" @click="exportPDF">
+          导出 PDF 报告
+        </el-button>
+        <el-button plain :icon="DocumentAdd" @click="exportFHIRBundle">
+          导出 FHIR
+        </el-button>
+      </div>
     </div>
 
     <!-- PDF 导出内容区域 -->
@@ -130,18 +135,20 @@ import { usePatientStore } from '@/stores/patient'
 import { ElMessage, ElLoading } from 'element-plus'
 import api from '@/utils/api'
 import { exportAnalysisReport } from '@/utils/pdfExport'
+
+import { exportFHIR } from '@/api/database-analysis'
 import EditableTextArea from '@/components/EditableTextArea.vue'
 import EditableLabTable from '@/components/EditableLabTable.vue'
 import SmartDiagnosisPanel from '@/components/SmartDiagnosisPanel.vue'
 import EvidenceViewer from '@/components/EvidenceViewer.vue'
-import {
-  ArrowLeft,
+import {ArrowLeft,
   Download,
   Document,
   PictureFilled,
   DataAnalysis,
   CircleCheck,
-  Warning
+  Warning,
+  DocumentAdd
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -200,6 +207,86 @@ const goBack = () => {
 const goToUpload = () => {
   router.push(`/upload/${currentPatient.value.patient_id}`)
 }
+
+const exportFHIRBundle = async () => {
+
+  if (!currentPatient.value) {
+
+    ElMessage.warning('未找到患者信息')
+
+    return
+
+  }
+
+
+
+  const loading = ElLoading.service({
+
+    lock: true,
+
+    text: '正在导出 FHIR Bundle...',
+
+    background: 'rgba(0, 0, 0, 0.7)'
+
+  })
+
+
+
+  try {
+
+    const res = await exportFHIR(currentPatient.value.patient_id)
+
+    const bundle = res.data
+
+
+
+    if (!bundle) {
+
+      ElMessage.warning('无可导出的 FHIR 数据')
+
+      return
+
+    }
+
+
+
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' })
+
+    const url = URL.createObjectURL(blob)
+
+    const link = document.createElement('a')
+
+    link.href = url
+
+    link.download = `patient-${currentPatient.value.patient_id}-bundle.json`
+
+    document.body.appendChild(link)
+
+    link.click()
+
+    document.body.removeChild(link)
+
+    URL.revokeObjectURL(url)
+
+
+
+    ElMessage.success('FHIR Bundle 已导出')
+
+  } catch (error) {
+
+    console.error('导出 FHIR 失败:', error)
+
+    ElMessage.error('导出 FHIR 失败')
+
+  } finally {
+
+    loading.close()
+
+  }
+
+}
+
+
 
 const exportPDF = async () => {
   if (!currentPatient.value) {

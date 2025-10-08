@@ -115,6 +115,24 @@ node backend/test-db-connection.js
    - 关联: `patient_id` → `patients`
    - 存储: 任务类型、状态、结果、错误信息
 
+7. **audit_logs** - 审计日志
+   - 关联: `user_id`、`resource_id`
+   - 存储: 操作者、动作、资源、数据前后对比以及 `metadata` 元数据（模型版本、提示词、阈值等）
+
+8. **review_queue** - 多模态复核队列
+   - 关联: `patient_id`、`diagnosis_id`
+   - 存储: 冲突来源与原因、细节 JSON、优先级、处理人及处理记录
+
+9. **model_calibration** - 模型置信度校准参数
+   - 关键字段: `model_key`、`calibration_method`、`parameters`
+   - 存储: 最新校准参数与前后指标（ECE、Brier 等）
+
+### 关键存储过程
+
+- `consistency_check(patient_id, diagnosis_id)`：对文本、影像、实验室的最新结论进行关键词守门，若出现“正常/异常”冲突则写入 `review_queue` 等待人工复核，并返回冲突详情。
+- `to_fhir(patient_id)`：根据患者主档、诊断、检验等数据生成 FHIR `Bundle`，用于院内系统对接。
+- `calibrate_confidence(model_key, predictions, labels, method)`：对模型置信度进行温度缩放，更新 `model_calibration` 表并返回校准指标。
+
 ### 索引优化
 
 所有表都基于 `patient_id` 分片，确保查询性能：

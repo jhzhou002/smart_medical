@@ -10,6 +10,7 @@ const qiniuService = require('../services/qiniu');
 const opentenbaseAI = require('../services/opentenbase-ai');
 const { query } = require('../config/db');
 const logger = require('../config/logger');
+const { writeAuditLog } = require('../utils/audit-log');
 
 // 配置 Multer 内存存储
 const storage = multer.memoryStorage();
@@ -80,8 +81,8 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
 
     // 3. 存入数据库
     const insertSQL = `
-      INSERT INTO patient_text_data (patient_id, image_url, summary, status)
-      VALUES ($1, $2, $3, 'completed')
+      INSERT INTO patient_text_data (patient_id, image_url, ai_summary, final_summary, status, analyzed_at)
+      VALUES ($1, $2, $3, $3, 'approved', NOW())
       RETURNING *
     `;
 
@@ -109,6 +110,21 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
 
     logger.info('病历数据已存入数据库', { text_id: dbResult.rows[0].id });
 
+    await writeAuditLog({
+      userId: req.user?.id || null,
+      action: 'analyze',
+      resource: 'patient_text_data',
+      resourceId: dbResult.rows[0].id,
+      newValue: dbResult.rows[0],
+      metadata: {
+        route: req.originalUrl,
+        method: req.method,
+        source: 'image_upload',
+        qiniu_url: uploadResult.url
+      },
+      request: req
+    });
+
     // 返回成功响应
     res.status(201).json({
       success: true,
@@ -116,7 +132,9 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
         id: dbResult.rows[0].id,
         patient_id: dbResult.rows[0].patient_id,
         image_url: dbResult.rows[0].image_url,
-        summary: dbResult.rows[0].summary,
+        ai_summary: dbResult.rows[0].ai_summary,
+        final_summary: dbResult.rows[0].final_summary,
+        summary: dbResult.rows[0].final_summary || dbResult.rows[0].ai_summary,
         status: dbResult.rows[0].status,
         created_at: dbResult.rows[0].created_at
       },
@@ -160,8 +178,8 @@ router.post('/save-condition', async (req, res, next) => {
 
     // 存入数据库（image_url 为空，表示非图片上传）
     const insertSQL = `
-      INSERT INTO patient_text_data (patient_id, image_url, summary, status)
-      VALUES ($1, NULL, $2, 'completed')
+      INSERT INTO patient_text_data (patient_id, image_url, ai_summary, final_summary, status, analyzed_at, reviewed_at)
+      VALUES ($1, NULL, $2, $2, 'approved', NOW(), NOW())
       RETURNING *
     `;
 
@@ -188,6 +206,20 @@ router.post('/save-condition', async (req, res, next) => {
 
     logger.info('病历总结已保存', { text_id: dbResult.rows[0].id });
 
+    await writeAuditLog({
+      userId: req.user?.id || null,
+      action: 'create',
+      resource: 'patient_text_data',
+      resourceId: dbResult.rows[0].id,
+      newValue: dbResult.rows[0],
+      metadata: {
+        route: req.originalUrl,
+        method: req.method,
+        source: 'latest_condition'
+      },
+      request: req
+    });
+
     // 返回成功响应
     res.status(201).json({
       success: true,
@@ -195,7 +227,9 @@ router.post('/save-condition', async (req, res, next) => {
         id: dbResult.rows[0].id,
         patient_id: dbResult.rows[0].patient_id,
         image_url: null,
-        summary: dbResult.rows[0].summary,
+        ai_summary: dbResult.rows[0].ai_summary,
+        final_summary: dbResult.rows[0].final_summary,
+        summary: dbResult.rows[0].final_summary || dbResult.rows[0].ai_summary,
         status: dbResult.rows[0].status,
         created_at: dbResult.rows[0].created_at
       },
@@ -218,7 +252,17 @@ router.get('/patient/:patientId', async (req, res, next) => {
     const patient_id = patientId;
 
     const sql = `
-      SELECT * FROM patient_text_data
+      SELECT
+        id,
+        patient_id,
+        image_url,
+        ai_summary,
+        final_summary,
+        COALESCE(final_summary, ai_summary) AS summary,
+        status,
+        error_message,
+        created_at
+      FROM patient_text_data
       WHERE patient_id = $1
       ORDER BY created_at DESC
     `;
@@ -243,7 +287,7 @@ router.get('/patient/:patientId', async (req, res, next) => {
 router.put('/:text_id', async (req, res, next) => {
   try {
     const { text_id } = req.params;
-    const { summary } = req.body;
+    const { summary, edit_reason } = req.body;
 
     // 验证参数
     if (!summary || !summary.trim()) {
@@ -256,7 +300,7 @@ router.put('/:text_id', async (req, res, next) => {
     logger.info('更新病历分析结果', { text_id });
 
     // 先检查记录是否存在并获取 patient_id（用于分片键查询）
-    const selectSQL = 'SELECT patient_id FROM patient_text_data WHERE id = $1';
+    const selectSQL = 'SELECT * FROM patient_text_data WHERE id = $1';
     const selectResult = await query(selectSQL, [text_id]);
 
     if (selectResult.rows.length === 0) {
@@ -266,23 +310,48 @@ router.put('/:text_id', async (req, res, next) => {
       });
     }
 
-    const patient_id = selectResult.rows[0].patient_id;
+    const existingRecord = selectResult.rows[0];
+    const patient_id = existingRecord.patient_id;
 
     // 更新数据库（必须带上分片键 patient_id）
+    const editorId = req.user?.id || null;
     const updateSQL = `
       UPDATE patient_text_data
-      SET summary = $1
+      SET final_summary = $1,
+          edited = TRUE,
+          edited_by = COALESCE($4, edited_by),
+          edit_reason = COALESCE($5, edit_reason),
+          version = version + 1,
+          status = 'reviewed',
+          reviewed_at = NOW()
       WHERE id = $2 AND patient_id = $3
       RETURNING *
     `;
 
-    const result = await query(updateSQL, [summary.trim(), text_id, patient_id]);
+    const result = await query(updateSQL, [summary.trim(), text_id, patient_id, editorId, edit_reason || null]);
 
     logger.info('病历分析结果已更新', { text_id });
 
+    await writeAuditLog({
+      userId: req.user?.id || null,
+      action: 'update',
+      resource: 'patient_text_data',
+      resourceId: Number(text_id),
+      oldValue: existingRecord,
+      newValue: result.rows[0],
+      metadata: {
+        route: req.originalUrl,
+        method: req.method
+      },
+      request: req
+    });
+
     res.json({
       success: true,
-      data: result.rows[0],
+      data: {
+        ...result.rows[0],
+        summary: result.rows[0].final_summary || result.rows[0].ai_summary
+      },
       message: '更新成功'
     });
 
@@ -327,6 +396,20 @@ router.delete('/:text_id', async (req, res, next) => {
     await query(deleteSQL, [text_id]);
 
     logger.info('文本数据记录已删除', { text_id });
+
+    await writeAuditLog({
+      userId: req.user?.id || null,
+      action: 'delete',
+      resource: 'patient_text_data',
+      resourceId: Number(text_id),
+      oldValue: record,
+      metadata: {
+        route: req.originalUrl,
+        method: req.method,
+        qiniu_url: record.image_url
+      },
+      request: req
+    });
 
     res.json({
       success: true,

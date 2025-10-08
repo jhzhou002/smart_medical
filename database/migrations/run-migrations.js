@@ -20,6 +20,7 @@ const pool = new Pool({
 const migrations = [
   '001_add_auth_system.sql',
   '002_modify_existing_tables.sql',
+  '003_review_queue_calibration.sql',
 ];
 
 // 执行单个迁移脚本

@@ -86,7 +86,17 @@ RETURNS TRIGGER
 
 -- 6. 多模态统一视图
 CREATE VIEW v_patient_multimodal AS ...
+
+-- 7. 多模态一致性守门
+CREATE FUNCTION consistency_check(p_patient_id INT, p_diagnosis_id INT)
+RETURNS JSONB
 ```
+
+### 辅助数据对象
+
+- `review_queue`：由一致性守门逻辑写入的待复核队列，记录冲突原因、优先级与处理状态。
+- `model_calibration`：持久化模型置信度校准参数与指标，供诊断流程读取最新版本。
+- `audit_logs.metadata`：审计日志新增元数据字段，完整追踪模型版本、提示词与阈值配置。
 
 ### 数据库端分析流程
 
@@ -184,7 +194,9 @@ Body: { "patient_id": 9 }
 GET /api/db-analysis/view/multimodal?patient_id=9
 
 # 6. 综合分析（并行调用所有存储过程）
-GET /api/db-analysis/comprehensive/:patient_id
+- GET /api/db-analysis/comprehensive/:patient_id
+- GET /api/db-analysis/fhir/:patient_id
+- POST /api/db-analysis/calibration — 上传预测/标签进行置信度校准
 ```
 
 ---

@@ -146,6 +146,65 @@ CREATE INDEX IF NOT EXISTS idx_tasks_type ON analysis_tasks(task_type);
 CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON analysis_tasks(created_at DESC);
 
 -- ==========================================
+-- 7. 审计日志表
+-- ==========================================
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    action VARCHAR(50) NOT NULL,
+    resource VARCHAR(50) NOT NULL,
+    resource_id INTEGER,
+    old_value JSONB,
+    new_value JSONB,
+    metadata JSONB,
+    ip_address VARCHAR(50),
+    user_agent TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_user ON audit_logs(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs(resource, resource_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);
+
+-- ==========================================
+-- 8. 多模态复核队列表
+-- ==========================================
+CREATE TABLE IF NOT EXISTS review_queue (
+    id SERIAL PRIMARY KEY,
+    patient_id INTEGER NOT NULL REFERENCES patients(patient_id) ON DELETE CASCADE,
+    diagnosis_id INTEGER REFERENCES patient_diagnosis(id) ON DELETE SET NULL,
+    source VARCHAR(50) NOT NULL,
+    reason TEXT NOT NULL,
+    details JSONB,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','in_review','resolved')),
+    priority VARCHAR(20) DEFAULT 'medium' CHECK (priority IN ('low','medium','high')),
+    reviewer_id INTEGER REFERENCES users(id),
+    resolved_at TIMESTAMP,
+    resolution_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) DISTRIBUTE BY SHARD(patient_id) TO GROUP default_group;
+
+CREATE INDEX IF NOT EXISTS idx_review_queue_status ON review_queue(status);
+CREATE INDEX IF NOT EXISTS idx_review_queue_patient ON review_queue(patient_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_review_queue_priority ON review_queue(priority, created_at DESC);
+
+-- ==========================================
+-- 9. 模型置信度校准表
+-- ==========================================
+CREATE TABLE IF NOT EXISTS model_calibration (
+    id SERIAL PRIMARY KEY,
+    model_key VARCHAR(100) NOT NULL,
+    calibration_method VARCHAR(50) NOT NULL,
+    parameters JSONB NOT NULL,
+    metrics JSONB,
+    effective_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_model_calibration_latest ON model_calibration(model_key, effective_from DESC);
+
+-- ==========================================
 -- 触发器: 自动更新 updated_at
 -- ==========================================
 CREATE OR REPLACE FUNCTION update_updated_at_column()

@@ -364,3 +364,13 @@ pm2 logs smart-medical
 ## License
 
 MIT
+
+### ģ̬һ
+
+- 洢 consistency_check(patient_id, diagnosis_id)  smart_diagnosis_v2 ڲԶã⵽ıӰʵݽìд 
+eview_queue
+- API /api/db-analysis/smart-diagnosis Ӧ consistency_review ֶΣͻ븴˶бţǰ˾ݴʾ˹ˡ
+
+- GET /api/db-analysis/fhir/:patient_id   FHIR Bundle JSON
+
+- POST /api/db-analysis/calibration  ϴԤ/ǩŶУ׼

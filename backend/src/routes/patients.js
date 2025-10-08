@@ -8,6 +8,7 @@ const router = express.Router();
 const Patient = require('../models/Patient');
 const { validate, schemas } = require('../middleware/validate');
 const logger = require('../config/logger');
+const { writeAuditLog } = require('../utils/audit-log');
 
 /**
  * @route   GET /api/patients
@@ -149,6 +150,16 @@ router.post('/', validate(schemas.createPatient), async (req, res, next) => {
 
     logger.info('[创建患者] 患者创建成功，返回数据:', patient);
 
+    await writeAuditLog({
+      userId: req.user?.id || null,
+      action: 'create',
+      resource: 'patients',
+      resourceId: patient.patient_id,
+      newValue: patient,
+      metadata: { route: req.originalUrl, method: req.method },
+      request: req
+    });
+
     res.status(201).json({
       success: true,
       data: patient,
@@ -172,6 +183,8 @@ router.put(
     try {
       const { id } = req.params;
 
+      const existingPatient = await Patient.getById(id);
+
       const updatedPatient = await Patient.update(id, req.body);
 
       if (!updatedPatient) {
@@ -180,6 +193,17 @@ router.put(
           message: '患者不存在'
         });
       }
+
+      await writeAuditLog({
+        userId: req.user?.id || null,
+        action: 'update',
+        resource: 'patients',
+        resourceId: Number(id),
+        oldValue: existingPatient,
+        newValue: updatedPatient,
+        metadata: { route: req.originalUrl, method: req.method },
+        request: req
+      });
 
       res.json({
         success: true,
@@ -201,21 +225,37 @@ router.delete('/:id', validate(schemas.patientId, 'params'), async (req, res, ne
   try {
     const { id } = req.params;
 
-    const deleted = await Patient.delete(id);
+    const existingPatient = await Patient.getById(id);
 
-    if (!deleted) {
+    if (!existingPatient) {
       return res.status(404).json({
         success: false,
         message: '患者不存在'
       });
     }
 
-    logger.warn('患者已删除', { patient_id: id });
+    const deleted = await Patient.delete(id);
 
-    res.json({
-      success: true,
-      message: '患者删除成功'
-    });
+    if (deleted) {
+      logger.warn('患者已删除', { patient_id: id });
+
+      await writeAuditLog({
+        userId: req.user?.id || null,
+        action: 'delete',
+        resource: 'patients',
+        resourceId: Number(id),
+        oldValue: existingPatient,
+        metadata: { route: req.originalUrl, method: req.method },
+        request: req
+      });
+
+      res.json({
+        success: true,
+        message: '患者删除成功'
+      });
+    } else {
+      res.status(500).json({ success: false, message: '患者删除失败' });
+    }
   } catch (error) {
     next(error);
   }

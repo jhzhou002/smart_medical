@@ -5,6 +5,7 @@ const qiniuService = require('../services/qiniu');
 const opentenbaseAI = require('../services/opentenbase-ai');
 const { query } = require('../config/db');
 const logger = require('../config/logger');
+const { writeAuditLog } = require('../utils/audit-log');
 
 const storage = multer.memoryStorage();
 const upload = multer({
@@ -87,16 +88,32 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
 
     logger.info('Lab data saved to database', { id: dbResult.rows[0].id });
 
+    const responseData = {
+      id: dbResult.rows[0].id,
+      patient_id: dbResult.rows[0].patient_id,
+      lab_url: dbResult.rows[0].lab_url,
+      lab_json: dbResult.rows[0].lab_json,
+      created_at: dbResult.rows[0].created_at
+    };
+
     res.status(201).json({
       success: true,
-      data: {
-        id: dbResult.rows[0].id,
-        patient_id: dbResult.rows[0].patient_id,
-        lab_url: dbResult.rows[0].lab_url,
-        lab_json: dbResult.rows[0].lab_json,
-        created_at: dbResult.rows[0].created_at
-      },
+      data: responseData,
       message: 'Lab data extraction completed'
+    });
+
+    await writeAuditLog({
+      userId: req.user?.id || null,
+      action: 'analyze',
+      resource: 'patient_lab_data',
+      resourceId: dbResult.rows[0].id,
+      newValue: responseData,
+      metadata: {
+        route: req.originalUrl,
+        method: req.method,
+        qiniu_url: uploadResult.url
+      },
+      request: req
     });
 
   } catch (error) {
@@ -148,7 +165,7 @@ router.put('/:id', async (req, res, next) => {
     logger.info('更新实验室指标数据', { id });
 
     // 先获取 patient_id（用于分片键查询）
-    const selectSQL = 'SELECT patient_id FROM patient_lab_data WHERE id = $1';
+    const selectSQL = 'SELECT * FROM patient_lab_data WHERE id = $1';
     const selectResult = await query(selectSQL, [id]);
 
     if (selectResult.rows.length === 0) {
@@ -158,7 +175,8 @@ router.put('/:id', async (req, res, next) => {
       });
     }
 
-    const patient_id = selectResult.rows[0].patient_id;
+    const existingRecord = selectResult.rows[0];
+    const patient_id = existingRecord.patient_id;
 
     // 更新数据库（必须带上分片键）
     const updateSQL = `
@@ -180,6 +198,17 @@ router.put('/:id', async (req, res, next) => {
       success: true,
       data: result.rows[0],
       message: '更新成功'
+    });
+
+    await writeAuditLog({
+      userId: req.user?.id || null,
+      action: 'update',
+      resource: 'patient_lab_data',
+      resourceId: Number(id),
+      oldValue: existingRecord,
+      newValue: result.rows[0],
+      metadata: { route: req.originalUrl, method: req.method },
+      request: req
     });
 
   } catch (error) {
@@ -220,6 +249,16 @@ router.delete('/:id', async (req, res, next) => {
     res.json({
       success: true,
       message: 'Deleted successfully'
+    });
+
+    await writeAuditLog({
+      userId: req.user?.id || null,
+      action: 'delete',
+      resource: 'patient_lab_data',
+      resourceId: Number(id),
+      oldValue: record,
+      metadata: { route: req.originalUrl, method: req.method, qiniu_url: record.lab_url },
+      request: req
     });
 
   } catch (error) {

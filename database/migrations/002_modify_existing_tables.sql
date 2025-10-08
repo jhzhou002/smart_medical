@@ -27,6 +27,10 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_name='patient_text_data' AND column_name='summary'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='patient_text_data' AND column_name='ai_summary'
   ) THEN
     ALTER TABLE patient_text_data RENAME COLUMN summary TO ai_summary;
   END IF;
@@ -53,6 +57,11 @@ COMMENT ON COLUMN patient_text_data.status IS '复审状态: pending-待复审, 
 COMMENT ON COLUMN patient_text_data.analyzed_at IS 'AI分析完成时间';
 COMMENT ON COLUMN patient_text_data.reviewed_at IS '医生复审时间';
 
+ALTER TABLE patient_text_data
+  DROP CONSTRAINT IF EXISTS patient_text_data_status_check,
+  ADD CONSTRAINT patient_text_data_status_check
+    CHECK (status IN ('pending','processing','completed','failed','reviewed','approved'));
+
 -- 创建索引
 CREATE INDEX IF NOT EXISTS idx_text_data_status ON patient_text_data(patient_id, status);
 CREATE INDEX IF NOT EXISTS idx_text_data_reviewed ON patient_text_data(edited_by, reviewed_at);
@@ -67,6 +76,10 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_name='patient_ct_data' AND column_name='analysis_result'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='patient_ct_data' AND column_name='ai_analysis'
   ) THEN
     ALTER TABLE patient_ct_data RENAME COLUMN analysis_result TO ai_analysis;
   END IF;
@@ -93,6 +106,13 @@ COMMENT ON COLUMN patient_ct_data.status IS '复审状态: pending-待复审, re
 COMMENT ON COLUMN patient_ct_data.analyzed_at IS 'AI分析完成时间';
 COMMENT ON COLUMN patient_ct_data.reviewed_at IS '医生复审时间';
 
+ALTER TABLE patient_ct_data
+  DROP CONSTRAINT IF EXISTS patient_ct_data_status_check,
+  ADD CONSTRAINT patient_ct_data_status_check
+    CHECK (status IN (
+      'pending','processing','completed','failed','reviewed','approved'
+    ));
+
 -- 创建索引
 CREATE INDEX IF NOT EXISTS idx_ct_data_status ON patient_ct_data(patient_id, status);
 CREATE INDEX IF NOT EXISTS idx_ct_data_reviewed ON patient_ct_data(edited_by, reviewed_at);
@@ -107,6 +127,10 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_name='patient_lab_data' AND column_name='analysis_result'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='patient_lab_data' AND column_name='ai_interpretation'
   ) THEN
     ALTER TABLE patient_lab_data RENAME COLUMN analysis_result TO ai_interpretation;
   END IF;
@@ -114,6 +138,7 @@ END $$;
 
 -- 添加新字段
 ALTER TABLE patient_lab_data
+  ADD COLUMN IF NOT EXISTS ai_interpretation TEXT,                -- AI 原始解读
   ADD COLUMN IF NOT EXISTS final_interpretation TEXT,             -- 医生复审后的最终解读
   ADD COLUMN IF NOT EXISTS edited BOOLEAN DEFAULT FALSE,          -- 是否被医生编辑过
   ADD COLUMN IF NOT EXISTS edited_by INTEGER REFERENCES users(id), -- 复审医生ID
@@ -133,6 +158,13 @@ COMMENT ON COLUMN patient_lab_data.status IS '复审状态: pending-待复审, r
 COMMENT ON COLUMN patient_lab_data.analyzed_at IS 'AI分析完成时间';
 COMMENT ON COLUMN patient_lab_data.reviewed_at IS '医生复审时间';
 
+ALTER TABLE patient_lab_data
+  DROP CONSTRAINT IF EXISTS patient_lab_data_status_check,
+  ADD CONSTRAINT patient_lab_data_status_check
+    CHECK (status IN (
+      'pending','processing','completed','failed','reviewed','approved'
+    ));
+
 -- 创建索引
 CREATE INDEX IF NOT EXISTS idx_lab_data_status ON patient_lab_data(patient_id, status);
 CREATE INDEX IF NOT EXISTS idx_lab_data_reviewed ON patient_lab_data(edited_by, reviewed_at);
@@ -141,14 +173,22 @@ CREATE INDEX IF NOT EXISTS idx_lab_data_reviewed ON patient_lab_data(edited_by, 
 -- 5. 修改 patient_diagnosis 表 - 添加版本控制字段
 -- ==========================================
 
--- 重命名原有的 综合诊断 字段为 ai_diagnosis
+-- 确保存在 ai_diagnosis 列，若不存在则新增并同步旧数据
 DO $$
 BEGIN
-  IF EXISTS (
+  IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
-    WHERE table_name='patient_diagnosis' AND column_name='综合诊断'
+    WHERE table_name='patient_diagnosis' AND column_name='ai_diagnosis'
   ) THEN
-    ALTER TABLE patient_diagnosis RENAME COLUMN "综合诊断" TO ai_diagnosis;
+    ALTER TABLE patient_diagnosis ADD COLUMN ai_diagnosis TEXT;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name='patient_diagnosis' AND column_name='diagnosis_text'
+    ) THEN
+      UPDATE patient_diagnosis
+      SET ai_diagnosis = diagnosis_text
+      WHERE ai_diagnosis IS NULL;
+    END IF;
   END IF;
 END $$;
 
@@ -207,11 +247,24 @@ SET
 WHERE final_analysis IS NULL AND ai_analysis IS NOT NULL;
 
 -- patient_lab_data: 将 ai_interpretation 复制到 final_interpretation
+-- 若原有 lab_data 列存在，将其迁移到 ai_interpretation
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='patient_lab_data' AND column_name='lab_data'
+  ) THEN
+    UPDATE patient_lab_data
+    SET ai_interpretation = COALESCE(ai_interpretation, lab_data::TEXT)
+    WHERE ai_interpretation IS NULL;
+  END IF;
+END $$;
+
 UPDATE patient_lab_data
 SET
-  final_interpretation = ai_interpretation,
-  status = 'approved',
-  analyzed_at = created_at
+  final_interpretation = COALESCE(final_interpretation, ai_interpretation),
+  status = CASE WHEN ai_interpretation IS NOT NULL THEN 'approved' ELSE status END,
+  analyzed_at = COALESCE(analyzed_at, created_at)
 WHERE final_interpretation IS NULL AND ai_interpretation IS NOT NULL;
 
 -- patient_diagnosis: 将 ai_diagnosis 复制到 final_diagnosis

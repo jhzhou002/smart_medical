@@ -10,6 +10,7 @@ const qiniuService = require('../services/qiniu');
 const { query } = require('../config/db');
 const logger = require('../config/logger');
 const { CT_ANALYSIS_PROMPT } = require('../prompts/ct-analysis-prompt');
+const { writeAuditLog } = require('../utils/audit-log');
 
 // 配置文件上传
 const storage = multer.memoryStorage();
@@ -114,17 +115,34 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
     ]);
 
     // 5. 返回结果
+    const responseData = {
+      id: dbResult.rows[0].id,
+      patient_id: dbResult.rows[0].patient_id,
+      body_part: dbResult.rows[0].body_part,
+      ct_url: dbResult.rows[0].ct_url,
+      analysis_result: dbResult.rows[0].analysis_result,
+      created_at: dbResult.rows[0].created_at
+    };
+
     res.status(201).json({
       success: true,
-      data: {
-        id: dbResult.rows[0].id,
-        patient_id: dbResult.rows[0].patient_id,
-        body_part: dbResult.rows[0].body_part,
-        ct_url: dbResult.rows[0].ct_url,
-        analysis_result: dbResult.rows[0].analysis_result,
-        created_at: dbResult.rows[0].created_at
-      },
+      data: responseData,
       message: 'CT analysis completed'
+    });
+
+    await writeAuditLog({
+      userId: req.user?.id || null,
+      action: 'analyze',
+      resource: 'patient_ct_data',
+      resourceId: dbResult.rows[0].id,
+      newValue: responseData,
+      metadata: {
+        route: req.originalUrl,
+        method: req.method,
+        body_part,
+        qiniu_url: ctUpload.url
+      },
+      request: req
     });
 
   } catch (error) {
@@ -179,7 +197,7 @@ router.put('/:id', async (req, res, next) => {
     logger.info('更新 CT 分析结果', { id });
 
     // 先获取 patient_id（用于分片键查询）
-    const selectSQL = 'SELECT patient_id FROM patient_ct_data WHERE id = $1';
+    const selectSQL = 'SELECT * FROM patient_ct_data WHERE id = $1';
     const selectResult = await query(selectSQL, [id]);
 
     if (selectResult.rows.length === 0) {
@@ -189,7 +207,8 @@ router.put('/:id', async (req, res, next) => {
       });
     }
 
-    const patient_id = selectResult.rows[0].patient_id;
+    const existingRecord = selectResult.rows[0];
+    const patient_id = existingRecord.patient_id;
 
     // 更新数据库（必须带上分片键）
     const updateSQL = `
@@ -209,6 +228,17 @@ router.put('/:id', async (req, res, next) => {
       message: '更新成功'
     });
 
+    await writeAuditLog({
+      userId: req.user?.id || null,
+      action: 'update',
+      resource: 'patient_ct_data',
+      resourceId: Number(id),
+      oldValue: existingRecord,
+      newValue: result.rows[0],
+      metadata: { route: req.originalUrl, method: req.method },
+      request: req
+    });
+
   } catch (error) {
     logger.error('更新 CT 分析结果失败', { error: error.message });
     next(error);
@@ -222,11 +252,7 @@ router.delete('/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    const sql = `
-      DELETE FROM patient_ct_data
-      WHERE id = $1
-      RETURNING *
-    `;
+    const sql = 'DELETE FROM patient_ct_data WHERE id = $1 RETURNING *';
 
     const result = await query(sql, [id]);
 
@@ -237,9 +263,21 @@ router.delete('/:id', async (req, res, next) => {
       });
     }
 
+    const record = result.rows[0];
+
     res.json({
       success: true,
       message: 'CT record deleted successfully'
+    });
+
+    await writeAuditLog({
+      userId: req.user?.id || null,
+      action: 'delete',
+      resource: 'patient_ct_data',
+      resourceId: Number(id),
+      oldValue: record,
+      metadata: { route: req.originalUrl, method: req.method, qiniu_url: record.ct_url },
+      request: req
     });
 
   } catch (error) {

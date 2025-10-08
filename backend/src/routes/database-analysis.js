@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { query } = require('../config/db');
 const logger = require('../config/logger');
+const { writeAuditLog } = require('../utils/audit-log');
 
 /**
  * 数据库端智能分析 API
@@ -198,6 +199,103 @@ router.get('/comprehensive/:patient_id', async (req, res, next) => {
     });
   } catch (error) {
     logger.error('综合分析失败', { error: error.message });
+    next(error);
+  }
+});
+
+// ============================================
+// 7. FHIR 导出
+// ============================================
+router.get('/fhir/:patient_id', async (req, res, next) => {
+  try {
+    const { patient_id } = req.params;
+
+    logger.info('FHIR 导出请求', { patient_id });
+
+    const result = await query('SELECT to_fhir($1) AS bundle', [patient_id]);
+
+    if (!result.rows.length || !result.rows[0].bundle) {
+      return res.status(404).json({
+        success: false,
+        error: 'FHIR bundle not available for the specified patient'
+      });
+    }
+
+    const bundle = result.rows[0].bundle;
+
+    await writeAuditLog({
+      userId: req.user?.id || null,
+      action: 'export',
+      resource: 'fhir_bundle',
+      resourceId: Number(patient_id),
+      metadata: {
+        route: req.originalUrl,
+        method: req.method,
+        entryCount: Array.isArray(bundle.entry) ? bundle.entry.length : 0
+      },
+      request: req
+    });
+
+    res.json({
+      success: true,
+      data: bundle
+    });
+  } catch (error) {
+    logger.error('FHIR 导出失败', { error: error.message });
+    next(error);
+  }
+});
+
+// ============================================
+// 8. 置信度校准
+// ============================================
+router.post('/calibration', async (req, res, next) => {
+  try {
+    const { model_key = 'smart_diagnosis_v2', method = 'temperature_scaling', predictions, labels } = req.body || {};
+
+    if (!Array.isArray(predictions) || predictions.length === 0) {
+      return res.status(400).json({ success: false, error: 'predictions array is required' });
+    }
+
+    if (!Array.isArray(labels) || labels.length === 0) {
+      return res.status(400).json({ success: false, error: 'labels array is required' });
+    }
+
+    if (predictions.length !== labels.length) {
+      return res.status(400).json({ success: false, error: 'predictions and labels length mismatch' });
+    }
+
+    const sql = 'SELECT calibrate_confidence($1, $2::jsonb, $3::jsonb, $4) AS calibration';
+    const result = await query(sql, [
+      model_key,
+      JSON.stringify(predictions),
+      JSON.stringify(labels),
+      method
+    ]);
+
+    const calibration = result.rows[0].calibration;
+
+    await writeAuditLog({
+      userId: req.user?.id || null,
+      action: 'calibrate',
+      resource: 'model_calibration',
+      resourceId: calibration && calibration.calibration_id ? calibration.id : null,
+      metadata: {
+        route: req.originalUrl,
+        method: req.method,
+        model_key,
+        method,
+        sample_count: predictions.length
+      },
+      request: req
+    });
+
+    res.status(201).json({
+      success: true,
+      data: calibration
+    });
+  } catch (error) {
+    logger.error('置信度校准失败', { error: error.message });
     next(error);
   }
 });

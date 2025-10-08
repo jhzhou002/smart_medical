@@ -4,6 +4,7 @@ const opentenbaseAI = require('../services/opentenbase-ai');
 const Patient = require('../models/Patient');
 const { query } = require('../config/db');
 const logger = require('../config/logger');
+const { writeAuditLog } = require('../utils/audit-log');
 
 router.post('/generate', async (req, res, next) => {
   try {
@@ -164,16 +165,34 @@ ${aiDiagnosisText}
       logger.error('更新患者最新病症失败', { patient_id, error: error.message });
     }
 
+    const diagnosisRecord = dbResult.rows[0];
+
+    const responsePayload = {
+      diagnosis_id: diagnosisRecord.id,
+      patient_id: diagnosisRecord.patient_id,
+      diagnosis_text: diagnosisRecord.diagnosis_text,
+      confidence_score: diagnosisRecord.confidence_score,
+      created_at: diagnosisRecord.created_at
+    };
+
     res.status(201).json({
       success: true,
-      data: {
-        diagnosis_id: dbResult.rows[0].id,
-        patient_id: dbResult.rows[0].patient_id,
-        diagnosis_text: dbResult.rows[0].diagnosis_text,
-        confidence_score: dbResult.rows[0].confidence_score,
-        created_at: dbResult.rows[0].created_at
-      },
+      data: responsePayload,
       message: 'Diagnosis generated successfully'
+    });
+
+    await writeAuditLog({
+      userId: req.user?.id || null,
+      action: 'analyze',
+      resource: 'patient_diagnosis',
+      resourceId: diagnosisRecord.id,
+      newValue: responsePayload,
+      metadata: {
+        route: req.originalUrl,
+        method: req.method,
+        ai_summary: aiDiagnosisText
+      },
+      request: req
     });
 
   } catch (error) {
@@ -227,6 +246,16 @@ router.delete('/:diagnosis_id', async (req, res, next) => {
     res.json({
       success: true,
       message: 'Deleted successfully'
+    });
+
+    await writeAuditLog({
+      userId: req.user?.id || null,
+      action: 'delete',
+      resource: 'patient_diagnosis',
+      resourceId: Number(diagnosis_id),
+      oldValue: selectResult.rows[0],
+      metadata: { route: req.originalUrl, method: req.method },
+      request: req
     });
 
   } catch (error) {

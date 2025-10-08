@@ -85,3 +85,54 @@ CREATE TABLE IF NOT EXISTS patient_diagnosis (
 );
 
 COMMENT ON TABLE patient_diagnosis IS '综合诊断表';
+
+-- ==========================================
+-- 6. 审计日志表
+-- ==========================================
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER,
+    action VARCHAR(50) NOT NULL,
+    resource VARCHAR(50) NOT NULL,
+    resource_id INTEGER,
+    old_value JSONB,
+    new_value JSONB,
+    metadata JSONB,
+    ip_address VARCHAR(50),
+    user_agent TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+COMMENT ON TABLE audit_logs IS '审计日志表';
+
+-- ==========================================
+-- 7. 多模态复核队列表
+-- ==========================================
+CREATE TABLE IF NOT EXISTS review_queue (
+    id SERIAL PRIMARY KEY,
+    patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    diagnosis_id INTEGER REFERENCES patient_diagnosis(id) ON DELETE SET NULL,
+    source VARCHAR(50) NOT NULL,
+    reason TEXT NOT NULL,
+    details JSONB,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','in_review','resolved')),
+    priority VARCHAR(20) DEFAULT 'medium' CHECK (priority IN ('low','medium','high')),
+    reviewer_id INTEGER,
+    resolved_at TIMESTAMP,
+    resolution_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ==========================================
+-- 8. 模型置信度校准表
+-- ==========================================
+CREATE TABLE IF NOT EXISTS model_calibration (
+    id SERIAL PRIMARY KEY,
+    model_key VARCHAR(100) NOT NULL,
+    calibration_method VARCHAR(50) NOT NULL,
+    parameters JSONB NOT NULL,
+    metrics JSONB,
+    effective_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

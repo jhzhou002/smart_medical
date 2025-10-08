@@ -164,17 +164,17 @@ class OpenTenBaseAI {
           ) ||
           E'\n\n【上次就诊病情】\n' ||
           COALESCE(
-            (SELECT summary FROM patient_text_data WHERE patient_id=$1 AND status=$$completed$$ ORDER BY created_at DESC LIMIT 1),
+            (SELECT COALESCE(final_summary, ai_summary) FROM patient_text_data WHERE patient_id=$1 AND status=$$completed$$ ORDER BY created_at DESC LIMIT 1),
             '无病历数据'
           ) ||
           E'\n\n【CT 影像分析】\n' ||
           COALESCE(
-            (SELECT analysis_result FROM patient_ct_data WHERE patient_id=$1 AND status=$$completed$$ ORDER BY created_at DESC LIMIT 1),
+            (SELECT COALESCE(final_analysis, analysis_result) FROM patient_ct_data WHERE patient_id=$1 AND status=$$completed$$ ORDER BY created_at DESC LIMIT 1),
             '无 CT 数据'
           ) ||
           E'\n\n【实验室指标】\n' ||
           COALESCE(
-            (SELECT lab_json::text FROM patient_lab_data WHERE patient_id=$1 AND status=$$completed$$ ORDER BY created_at DESC LIMIT 1),
+            (SELECT COALESCE(final_interpretation, lab_json::text) FROM patient_lab_data WHERE patient_id=$1 AND status=$$completed$$ ORDER BY created_at DESC LIMIT 1),
             '无实验室数据'
           ) ||
           E'\n\n请按以下格式输出诊断报告（每部分简洁明了，突出重点）：

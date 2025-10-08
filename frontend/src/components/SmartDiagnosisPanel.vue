@@ -32,6 +32,16 @@
                   置信度: {{ (diagnosisData.confidence * 100).toFixed(0) }}%
                 </el-tag>
               </el-tooltip>
+              <el-tooltip v-if="diagnosisData.calibrated_confidence !== undefined" content="校准后置信度" placement="top">
+                <el-tag type="info" size="large">
+                  校准后: {{ (diagnosisData.calibrated_confidence * 100).toFixed(0) }}%
+                </el-tag>
+              </el-tooltip>
+              <el-tooltip v-if="diagnosisData.calibrated_confidence !== undefined" content="校准后置信度" placement="top">
+                <el-tag type="info" size="large">
+                  校准后: {{ (diagnosisData.calibrated_confidence * 100).toFixed(0) }}%
+                </el-tag>
+              </el-tooltip>
               <el-tooltip content="风险评分" placement="top">
                 <el-tag :type="getRiskType(diagnosisData.risk_score)" size="large">
                   风险: {{ (diagnosisData.risk_score * 100).toFixed(0) }}%

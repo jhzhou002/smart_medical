@@ -28,7 +28,8 @@ INSERT INTO departments (name, code, description) VALUES
   ('内科', 'IM', '内科，负责初步诊断'),
   ('影像科', 'RAD', '影像科，负责CT等影像检查'),
   ('检验科', 'LAB', '检验科，负责血常规等检验'),
-  ('心内科', 'CARD', '心内科，负责心血管疾病专科诊断');
+  ('心内科', 'CARD', '心内科，负责心血管疾病专科诊断')
+ON CONFLICT (code) DO NOTHING;
 
 -- ==========================================
 -- 2. 创建用户表
@@ -55,9 +56,9 @@ COMMENT ON COLUMN users.role IS '用户角色';
 COMMENT ON COLUMN users.status IS '用户状态';
 
 -- 创建索引
-CREATE INDEX idx_users_username ON users(username);
-CREATE INDEX idx_users_role ON users(role);
-CREATE INDEX idx_users_department ON users(department_id);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+CREATE INDEX IF NOT EXISTS idx_users_department ON users(department_id);
 
 -- ==========================================
 -- 3. 创建检查申请单表
@@ -103,10 +104,10 @@ COMMENT ON COLUMN examination_orders.order_type IS '检查类型';
 COMMENT ON COLUMN examination_orders.status IS '申请单状态';
 
 -- 创建索引（优化查询性能）
-CREATE INDEX idx_exam_orders_status ON examination_orders(status, target_department_id);
-CREATE INDEX idx_exam_orders_patient ON examination_orders(patient_id, status);
-CREATE INDEX idx_exam_orders_requesting ON examination_orders(requesting_doctor_id, status);
-CREATE INDEX idx_exam_orders_target ON examination_orders(target_department_id, status);
+CREATE INDEX IF NOT EXISTS idx_exam_orders_status ON examination_orders(status, target_department_id);
+CREATE INDEX IF NOT EXISTS idx_exam_orders_patient ON examination_orders(patient_id, status);
+CREATE INDEX IF NOT EXISTS idx_exam_orders_requesting ON examination_orders(requesting_doctor_id, status);
+CREATE INDEX IF NOT EXISTS idx_exam_orders_target ON examination_orders(target_department_id, status);
 
 -- ==========================================
 -- 4. 创建审计日志表
@@ -119,6 +120,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   resource_id INTEGER,                    -- 资源ID
   old_value JSONB,                        -- 修改前的值（JSON格式）
   new_value JSONB,                        -- 修改后的值（JSON格式）
+  metadata JSONB,                         -- 模型版本、提示词等补充信息
   ip_address VARCHAR(50),                 -- 操作IP地址
   user_agent TEXT,                        -- 浏览器User-Agent
   created_at TIMESTAMP DEFAULT NOW()      -- 操作时间
@@ -126,45 +128,112 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 
 COMMENT ON TABLE audit_logs IS '审计日志表';
 COMMENT ON COLUMN audit_logs.action IS '操作动作';
-COMMENT ON COLUMN audit_logs.resource IS '操作的资源类型';
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'audit_logs' AND column_name = 'resource'
+  ) THEN
+    EXECUTE 'COMMENT ON COLUMN audit_logs.resource IS ''操作的资源类型''';
+  END IF;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'audit_logs' AND column_name = 'entity_type'
+  ) THEN
+    BEGIN
+      ALTER TABLE audit_logs RENAME COLUMN entity_type TO resource;
+    EXCEPTION WHEN duplicate_column THEN NULL;
+    END;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'audit_logs' AND column_name = 'entity_id'
+  ) THEN
+    BEGIN
+      ALTER TABLE audit_logs RENAME COLUMN entity_id TO resource_id;
+    EXCEPTION WHEN duplicate_column THEN NULL;
+    END;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'audit_logs' AND column_name = 'old_data'
+  ) THEN
+    BEGIN
+      ALTER TABLE audit_logs RENAME COLUMN old_data TO old_value;
+    EXCEPTION WHEN duplicate_column THEN NULL;
+    END;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'audit_logs' AND column_name = 'new_data'
+  ) THEN
+    BEGIN
+      ALTER TABLE audit_logs RENAME COLUMN new_data TO new_value;
+    EXCEPTION WHEN duplicate_column THEN NULL;
+    END;
+  END IF;
+
+  BEGIN
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS metadata JSONB;
+  EXCEPTION WHEN duplicate_column THEN NULL;
+  END;
+END;
+$$;
 
 -- 创建索引
-CREATE INDEX idx_audit_logs_user ON audit_logs(user_id, created_at);
-CREATE INDEX idx_audit_logs_resource ON audit_logs(resource, resource_id);
-CREATE INDEX idx_audit_logs_created ON audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_user ON audit_logs(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs(resource, resource_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);
 
 -- ==========================================
 -- 5. 创建处方表
 -- ==========================================
 CREATE TABLE IF NOT EXISTS prescriptions (
   id SERIAL PRIMARY KEY,
-  patient_id INTEGER REFERENCES patients(patient_id),           -- 患者ID (修正引用)
-  diagnosis_id INTEGER REFERENCES patient_diagnosis(id), -- 诊断ID
-  doctor_id INTEGER REFERENCES users(id),               -- 开方医生ID
+  patient_id INTEGER REFERENCES patients(patient_id),
+  diagnosis_id INTEGER REFERENCES patient_diagnosis(id),
+  doctor_id INTEGER REFERENCES users(id),
 
-  prescription_content TEXT,              -- 处方内容（文本格式）
-  prescription_json JSONB,                -- 结构化处方数据（JSON格式）
+  medications JSONB NOT NULL,
+  instructions TEXT,
+  notes TEXT,
 
-  status VARCHAR(20) DEFAULT 'active',    -- 状态: active, cancelled
-  created_at TIMESTAMP DEFAULT NOW(),     -- 开方时间
+  status VARCHAR(20) DEFAULT 'active',
+  created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
 COMMENT ON TABLE prescriptions IS '处方表';
-COMMENT ON COLUMN prescriptions.prescription_content IS '处方内容（文本）';
-COMMENT ON COLUMN prescriptions.prescription_json IS '结构化处方数据';
 
 -- 创建索引
-CREATE INDEX idx_prescriptions_patient ON prescriptions(patient_id);
-CREATE INDEX idx_prescriptions_doctor ON prescriptions(doctor_id);
-CREATE INDEX idx_prescriptions_diagnosis ON prescriptions(diagnosis_id);
+CREATE INDEX IF NOT EXISTS idx_prescriptions_patient ON prescriptions(patient_id);
+CREATE INDEX IF NOT EXISTS idx_prescriptions_doctor ON prescriptions(doctor_id);
+CREATE INDEX IF NOT EXISTS idx_prescriptions_diagnosis ON prescriptions(diagnosis_id);
 
 -- ==========================================
 -- 6. 更新 departments 表外键约束
 -- ==========================================
 -- 现在 users 表已存在，可以添加外键约束
-ALTER TABLE departments ADD CONSTRAINT fk_departments_head_doctor
-  FOREIGN KEY (head_doctor_id) REFERENCES users(id);
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS head_doctor_id INTEGER;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'fk_departments_head_doctor'
+  ) THEN
+    ALTER TABLE departments ADD CONSTRAINT fk_departments_head_doctor
+      FOREIGN KEY (head_doctor_id) REFERENCES users(id);
+  END IF;
+END;
+$$;
 
 -- ==========================================
 -- 完成提示
