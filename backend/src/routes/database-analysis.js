@@ -115,11 +115,18 @@ router.post('/smart-diagnosis', async (req, res, next) => {
     logger.info('调用智能诊断存储过程', { patient_id });
 
     const result = await query(
-      'SELECT smart_diagnosis_v2($1) AS diagnosis',
+      'SELECT smart_diagnosis_v3($1) AS diagnosis',
       [patient_id]
     );
 
-    const diagnosis = result.rows[0].diagnosis;
+    const diagnosis = result.rows[0]?.diagnosis;
+
+    if (!diagnosis) {
+      return res.status(500).json({
+        success: false,
+        error: 'Empty diagnosis result returned from database'
+      });
+    }
 
     res.status(201).json({
       success: true,
@@ -127,6 +134,27 @@ router.post('/smart-diagnosis', async (req, res, next) => {
       message: 'Database-side smart diagnosis completed',
       source: 'database_plpgsql'
     });
+
+    try {
+      await writeAuditLog({
+        userId: req.user?.id || null,
+        action: 'analyze',
+        resource: 'patient_diagnosis',
+        resourceId: diagnosis.diagnosis_id || null,
+        metadata: {
+          route: req.originalUrl,
+          method: req.method,
+          generator: 'smart_diagnosis_v3'
+        },
+        request: req,
+        newValue: diagnosis
+      });
+    } catch (auditError) {
+      logger.warn('记录智能诊断审计日志失败', {
+        patient_id,
+        error: auditError.message
+      });
+    }
   } catch (error) {
     logger.error('智能诊断失败', { error: error.message, stack: error.stack });
     next(error);
@@ -251,7 +279,7 @@ router.get('/fhir/:patient_id', async (req, res, next) => {
 // ============================================
 router.post('/calibration', async (req, res, next) => {
   try {
-    const { model_key = 'smart_diagnosis_v2', method = 'temperature_scaling', predictions, labels } = req.body || {};
+    const { model_key = 'smart_diagnosis_v3', method = 'temperature_scaling', predictions, labels } = req.body || {};
 
     if (!Array.isArray(predictions) || predictions.length === 0) {
       return res.status(400).json({ success: false, error: 'predictions array is required' });
