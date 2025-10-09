@@ -101,6 +101,176 @@ router.get('/anomalies/:patient_id', async (req, res, next) => {
 // ============================================
 // 4. 智能诊断（核心）
 // ============================================
+
+// 4.1 查询患者最新智能诊断记录
+router.get('/smart-diagnosis/:patient_id', async (req, res, next) => {
+  try {
+    const { patient_id } = req.params;
+
+    logger.info('查询患者最新诊断记录', { patient_id });
+
+    const result = await query(
+      `SELECT
+        id as diagnosis_id,
+        patient_id,
+        diagnosis_text as diagnosis,
+        ai_diagnosis as analysis,
+        confidence_score as confidence,
+        calibrated_confidence,
+        risk_score,
+        evidence_json,
+        evidence_json->'summary' as evidence_summary,
+        diagnosis_basis as evidence_detail,
+        treatment_plan as recommendations,
+        medical_advice as warnings,
+        diagnosed_at,
+        created_at as generated_at,
+        status,
+        doctor_review,
+        reviewed_at
+      FROM patient_diagnosis
+      WHERE patient_id = $1
+      ORDER BY created_at DESC
+      LIMIT 1`,
+      [patient_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.json({
+        success: true,
+        data: null,
+        message: 'No diagnosis found for this patient'
+      });
+    }
+
+    // 格式化数据
+    const diagnosis = result.rows[0];
+
+    // 处理 recommendations 和 warnings
+    if (diagnosis.recommendations && typeof diagnosis.recommendations === 'string') {
+      diagnosis.recommendations = diagnosis.recommendations.split('\n').filter(line => line.trim());
+    }
+    if (diagnosis.warnings && typeof diagnosis.warnings === 'string') {
+      diagnosis.warnings = diagnosis.warnings.split('\n').filter(line => line.trim());
+    }
+
+    // 处理 evidence_detail - 只保留有用的字段，移除完整表格数据
+    if (diagnosis.evidence_detail) {
+      const detail = diagnosis.evidence_detail;
+
+      // 移除完整的实验室指标数据，只保留解读和异常信息
+      if (detail.lab) {
+        const { lab_json, indicators, indicator_json, data, values, ...labRest } = detail.lab;
+        diagnosis.evidence_detail.lab = labRest;
+      }
+    }
+
+    // 查询异常指标数据
+    let anomalies = [];
+    try {
+      const anomaliesResult = await query(
+        'SELECT * FROM detect_lab_anomalies($1)',
+        [patient_id]
+      );
+      anomalies = anomaliesResult.rows || [];
+      diagnosis.lab_anomalies = anomalies;
+    } catch (err) {
+      logger.warn('查询异常指标失败', { patient_id, error: err.message });
+      diagnosis.lab_anomalies = [];
+    }
+
+    // 处理 evidence_summary - 将 JSON 格式的检验指标转换为自然语言
+    if (diagnosis.evidence_summary && Array.isArray(diagnosis.evidence_summary)) {
+      diagnosis.evidence_summary = diagnosis.evidence_summary.map(item => {
+        // 检测是否包含 JSON 格式的检验数据
+        if (typeof item === 'string' && item.includes('{') && item.includes('value')) {
+          try {
+            // 提取前缀部分（如 "检验（权重 34.0%）："）
+            const prefixMatch = item.match(/^([^:：]*?[（\(]权重[^)）]*[)）][：:])/);
+            const prefix = prefixMatch ? prefixMatch[1] : '';
+
+            // 提取 JSON 对象
+            const jsonMatch = item.match(/\{[^{}]+\}/g);
+            if (!jsonMatch || jsonMatch.length === 0) return item;
+
+            // 解析所有指标的 JSON 数据
+            const indicators = {};
+            const fullJson = item.substring(item.indexOf('{'));
+
+            try {
+              // 尝试解析完整的JSON对象
+              const parsed = JSON.parse(fullJson);
+              Object.assign(indicators, parsed);
+            } catch (parseError) {
+              // 如果解析失败，返回原文本
+              logger.warn('JSON解析失败', { item: fullJson.substring(0, 100), error: parseError.message });
+              return item;
+            }
+
+            // 只保留异常指标（有星号前缀的或在anomalies中的）
+            const abnormalDesc = [];
+
+            for (const [name, data] of Object.entries(indicators)) {
+              // 检查是否标记为异常（名称前有星号）
+              const isMarkedAbnormal = name.startsWith('*');
+              const cleanName = name.replace(/^\*/, '');
+
+              // 从anomalies中查找该指标
+              const anomaly = anomalies.find(a =>
+                a.indicator && (a.indicator.includes(cleanName) || a.indicator === cleanName)
+              );
+
+              if (isMarkedAbnormal || anomaly) {
+                let direction = '异常';
+                let severityText = '';
+
+                if (anomaly) {
+                  const zScore = parseFloat(anomaly.z_score);
+                  direction = zScore > 0 ? '偏高' : '偏低';
+
+                  const severity = anomaly.severity;
+                  if (severity && severity !== '轻度') {
+                    severityText = `，${severity}`;
+                  }
+
+                  abnormalDesc.push(
+                    `${cleanName}${direction}：检测值 ${data.value}${data.unit || ''}${severityText}`
+                  );
+                } else {
+                  // 没有anomaly数据但标记为异常
+                  abnormalDesc.push(
+                    `${cleanName}${direction}：检测值 ${data.value}${data.unit || ''}`
+                  );
+                }
+              }
+            }
+
+            if (abnormalDesc.length > 0) {
+              return prefix.replace(/：$/, '') + '：' + abnormalDesc.join('；');
+            } else {
+              return prefix + '各项指标基本正常';
+            }
+          } catch (e) {
+            logger.warn('处理证据摘要失败', { item: item.substring(0, 100), error: e.message });
+            return item;
+          }
+        }
+        return item;
+      }).filter(Boolean);
+    }
+
+    res.json({
+      success: true,
+      data: diagnosis,
+      source: 'database_query'
+    });
+  } catch (error) {
+    logger.error('查询诊断记录失败', { error: error.message });
+    next(error);
+  }
+});
+
+// 4.2 创建智能诊断
 router.post('/smart-diagnosis', async (req, res, next) => {
   try {
     const { patient_id } = req.body;

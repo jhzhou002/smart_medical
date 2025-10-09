@@ -70,7 +70,7 @@
         </p>
       </el-card>
 
-      <el-card v-if="diagnosisData.evidence_summary?.length" class="evidence-summary" shadow="hover">
+      <el-card v-if="formattedEvidenceSummary.length" class="evidence-summary" shadow="hover">
         <template #header>
           <span class="header-title">
             <el-icon><DocumentCopy /></el-icon>
@@ -78,7 +78,7 @@
           </span>
         </template>
         <ul class="summary-list">
-          <li v-for="(item, index) in diagnosisData.evidence_summary" :key="index">
+          <li v-for="(item, index) in formattedEvidenceSummary" :key="index">
             <el-icon color="#67C23A"><Check /></el-icon>
             <span>{{ item }}</span>
           </li>
@@ -111,32 +111,42 @@
             查看影像
           </el-link>
         </div>
-        <div class="detail-section" v-if="evidenceDetail.lab">
+        <div class="detail-section" v-if="evidenceDetail.lab || labAnomalies.length">
           <h4>检验</h4>
-          <p class="detail-text">{{ evidenceDetail.lab.interpretation || '无检验解读' }}</p>
-          <el-table
-            v-if="labIndicators.length"
-            :data="labIndicators"
-            size="small"
-            border
-            class="lab-table"
-          >
-            <el-table-column prop="name" label="指标" min-width="140" />
-            <el-table-column prop="valueWithUnit" label="结果" min-width="120" />
-            <el-table-column prop="reference" label="参考范围" min-width="140" />
-            <el-table-column prop="note" label="备注" min-width="160" />
-          </el-table>
-        </div>
-        <div class="detail-section" v-if="labAnomalies.length">
-          <h4>异常指标</h4>
-          <ul class="anomaly-list">
-            <li v-for="(item, index) in labAnomalies" :key="index">
-              <strong>{{ item.indicator || item.name }}</strong>：
-              {{ item.value }}
-              <span v-if="item.reference">（参考值：{{ item.reference }}）</span>
-              <span v-if="item.z_score !== undefined">，Z 值 {{ Number(item.z_score).toFixed(2) }}</span>
-            </li>
-          </ul>
+          <p v-if="evidenceDetail.lab?.interpretation" class="detail-text">
+            {{ evidenceDetail.lab.interpretation }}
+          </p>
+          <div v-if="labAnomalies.length" class="anomalies-section">
+            <h5 class="anomaly-title">异常指标</h5>
+            <el-table
+              :data="labAnomalies"
+              size="small"
+              border
+              class="anomaly-table"
+              :header-cell-style="{ background: '#FEF0F0', color: '#F56C6C' }"
+            >
+              <el-table-column prop="indicator" label="指标" min-width="140" />
+              <el-table-column prop="current_value" label="当前值" min-width="100">
+                <template #default="{ row }">
+                  <span class="abnormal-value">{{ row.current_value }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="z_score" label="Z-Score" min-width="100">
+                <template #default="{ row }">
+                  <el-tag v-if="row.z_score !== undefined" :type="getZScoreType(row.z_score)" size="small">
+                    {{ Number(row.z_score).toFixed(2) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="severity" label="严重程度" min-width="100">
+                <template #default="{ row }">
+                  <el-tag :type="getSeverityType(row.severity)" size="small">
+                    {{ row.severity || '轻度' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
         </div>
       </el-card>
 
@@ -183,6 +193,10 @@
       </el-card>
     </div>
 
+    <div v-else-if="loading" class="loading-state">
+      <el-skeleton :rows="5" animated />
+    </div>
+
     <el-empty
       v-else-if="!diagnosing"
       description="点击上方按钮开始智能诊断"
@@ -192,7 +206,7 @@
 </template>
 
 <script setup>
-import { ref, computed, defineProps, defineEmits, defineExpose } from 'vue'
+import { ref, computed, onMounted, defineProps, defineEmits, defineExpose } from 'vue'
 import {
   MagicStick,
   Operation,
@@ -206,7 +220,7 @@ import {
   List,
   WarningFilled
 } from '@element-plus/icons-vue'
-import { smartDiagnosis } from '@/api/database-analysis'
+import { getSmartDiagnosis, smartDiagnosis } from '@/api/database-analysis'
 import { ElMessage } from 'element-plus'
 import RiskScoreGauge from './RiskScoreGauge.vue'
 
@@ -221,6 +235,7 @@ const emit = defineEmits(['diagnosis-complete'])
 
 const diagnosing = ref(false)
 const diagnosisData = ref(null)
+const loading = ref(false)
 
 const hasCalibratedConfidence = computed(() =>
   diagnosisData.value?.calibrated_confidence !== undefined &&
@@ -267,6 +282,11 @@ const textFindings = computed(() => {
 })
 
 const labAnomalies = computed(() => {
+  // 优先使用顶层的 lab_anomalies（从后端新增的查询）
+  if (diagnosisData.value?.lab_anomalies && Array.isArray(diagnosisData.value.lab_anomalies)) {
+    return diagnosisData.value.lab_anomalies
+  }
+
   const detail = evidenceDetail.value
   if (detail?.lab_anomalies && Array.isArray(detail.lab_anomalies)) {
     return detail.lab_anomalies
@@ -277,93 +297,28 @@ const labAnomalies = computed(() => {
   return []
 })
 
-const labIndicators = computed(() => {
-  const lab = evidenceDetail.value?.lab
-  if (!lab) return []
-
-  let raw =
-    lab.lab_json ??
-    lab.indicators ??
-    lab.indicator_json ??
-    lab.data ??
-    lab.values
-
-  if (!raw && typeof lab === 'object') {
-    const entries = Object.keys(lab)
-      .filter((key) => key !== 'interpretation' && key !== 'id' && key !== 'created_at')
-      .map((key) => [key, lab[key]])
-    if (entries.length) {
-      raw = Object.fromEntries(entries)
-    }
-  }
-
-  if (typeof raw === 'string') {
-    try {
-      raw = JSON.parse(raw)
-    } catch (error) {
-      return []
-    }
-  }
-
-  if (Array.isArray(raw)) {
-    return raw
-      .map((item) => normaliseLabIndicator(item))
-      .filter(Boolean)
-  }
-
-  if (raw && typeof raw === 'object') {
-    return Object.entries(raw)
-      .map(([name, value]) => normaliseLabIndicator(value, name))
-      .filter(Boolean)
-  }
-
-  return []
+// 证据摘要（后端已格式化为自然语言）
+const formattedEvidenceSummary = computed(() => {
+  const summary = diagnosisData.value?.evidence_summary
+  if (!summary || !Array.isArray(summary)) return []
+  return summary.filter(Boolean)
 })
 
-function normaliseLabIndicator(value, fallbackName = '') {
-  if (value === null || value === undefined) return null
+// Z-Score 标签类型
+const getZScoreType = (zScore) => {
+  const abs = Math.abs(Number(zScore))
+  if (abs >= 3) return 'danger'
+  if (abs >= 2) return 'warning'
+  return 'info'
+}
 
-  if (typeof value === 'string' || typeof value === 'number') {
-    const text = String(value)
-    return {
-      name: fallbackName,
-      value: text,
-      valueWithUnit: text,
-      reference: '',
-      note: ''
-    }
-  }
-
-  if (typeof value === 'object') {
-    const name = value.name || value.label || fallbackName
-    const val = value.value ?? value.result ?? ''
-    const unit = value.unit ?? ''
-    const reference = value.reference ?? value.range ?? value.normal ?? ''
-    const abbreviation = value.abbreviation || ''
-    const flag = value.flag || value.status || ''
-    const comment = value.comment || value.note || value.tip || ''
-
-    const noteParts = []
-    if (abbreviation && abbreviation !== name) {
-      noteParts.push(`缩写：${abbreviation}`)
-    }
-    if (flag) {
-      noteParts.push(`标记：${flag}`)
-    }
-    if (comment) {
-      noteParts.push(comment)
-    }
-
-    return {
-      name,
-      value: val,
-      valueWithUnit: unit ? `${val} ${unit}` : String(val),
-      reference,
-      note: noteParts.join('；')
-    }
-  }
-
-  return null
+// 严重程度标签类型
+const getSeverityType = (severity) => {
+  if (!severity) return 'info'
+  const s = severity.toLowerCase()
+  if (s.includes('严重') || s.includes('重度')) return 'danger'
+  if (s.includes('中度')) return 'warning'
+  return 'info'
 }
 
 const warnings = computed(() => {
@@ -410,9 +365,29 @@ const formatDate = (dateString) => {
   })
 }
 
+// 加载已有的诊断记录
+const loadExistingDiagnosis = async () => {
+  loading.value = true
+  try {
+    const response = await getSmartDiagnosis(props.patientId)
+    if (response.success && response.data) {
+      diagnosisData.value = response.data
+    }
+  } catch (error) {
+    console.error('加载诊断记录失败:', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  loadExistingDiagnosis()
+})
+
 defineExpose({
   performDiagnosis,
-  diagnosisData
+  diagnosisData,
+  loadExistingDiagnosis
 })
 </script>
 
@@ -580,12 +555,31 @@ defineExpose({
   border-radius: 8px;
 }
 
-.lab-table {
-  margin-top: 12px;
+.anomalies-section {
+  margin-top: 16px;
+  padding: 12px;
+  background: #FEF0F0;
+  border-radius: 8px;
 }
 
-.lab-table :deep(.el-table__body td) {
-  font-size: 12px;
-  padding: 8px 12px;
+.anomaly-title {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #F56C6C;
+}
+
+.anomaly-table {
+  margin-top: 8px;
+}
+
+.anomaly-table :deep(.el-table__body td) {
+  font-size: 13px;
+  padding: 10px 12px;
+}
+
+.abnormal-value {
+  font-weight: 600;
+  color: #F56C6C;
 }
 </style>

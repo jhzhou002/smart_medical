@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- 背景圆形 -->
+  <circle cx="32" cy="32" r="30" fill="#667eea" />
+
+  <!-- 医疗十字 -->
+  <g fill="#ffffff">
+    <!-- 垂直条 -->
+    <rect x="26" y="16" width="12" height="32" rx="2" />
+    <!-- 水平条 -->
+    <rect x="16" y="26" width="32" height="12" rx="2" />
+  </g>
+
+  <!-- 脑部轮廓 -->
+  <path d="M 36 20 Q 40 18 42 22 Q 44 20 46 24 Q 48 28 46 32 Q 44 36 40 36 Q 38 38 36 36"
+        fill="none" stroke="#a5b4fc" stroke-width="1.5" opacity="0.8" />
+
+  <!-- 心电图线条装饰 -->
+  <path d="M 18 42 L 22 42 L 24 38 L 26 46 L 28 42 L 46 42"
+        fill="none" stroke="#a5b4fc" stroke-width="1.5" opacity="0.6" />
+</svg>

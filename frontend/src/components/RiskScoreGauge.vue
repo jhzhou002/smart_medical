@@ -8,7 +8,7 @@
       <!-- 风险等级文字 -->
       <div class="risk-level" :style="{ color: riskColor }">
         <div class="level-text">{{ riskLevel }}</div>
-        <div class="score-text">{{ score.toFixed(1) }}%</div>
+        <div class="score-text">{{ displayScore }}%</div>
       </div>
     </div>
 
@@ -38,9 +38,20 @@ const props = defineProps({
 const gaugeRef = ref(null)
 let chartInstance = null
 
+// 安全的分数值
+const safeScore = computed(() => {
+  const val = Number(props.score)
+  return isNaN(val) ? 0 : val
+})
+
+// 显示的分数（百分比）
+const displayScore = computed(() => {
+  return (safeScore.value * 100).toFixed(1)
+})
+
 // 计算风险等级
 const riskLevel = computed(() => {
-  const score = props.score * 100
+  const score = safeScore.value * 100
   if (score < 30) return '低风险'
   if (score < 60) return '中风险'
   return '高风险'
@@ -48,7 +59,7 @@ const riskLevel = computed(() => {
 
 // 计算风险颜色
 const riskColor = computed(() => {
-  const score = props.score * 100
+  const score = safeScore.value * 100
   if (score < 30) return '#67C23A' // 绿色
   if (score < 60) return '#E6A23C' // 橙色
   return '#F56C6C' // 红色
@@ -56,7 +67,7 @@ const riskColor = computed(() => {
 
 // 风险描述
 const riskDescription = computed(() => {
-  const score = props.score * 100
+  const score = safeScore.value * 100
   if (score < 30) {
     return '患者整体状况良好，各项指标基本正常，建议定期复查。'
   } else if (score < 60) {
@@ -126,7 +137,7 @@ const initChart = () => {
         },
         data: [
           {
-            value: (props.score * 100).toFixed(1),
+            value: parseFloat(displayScore.value),
             name: ''
           }
         ]
@@ -146,7 +157,7 @@ const updateChart = () => {
       {
         data: [
           {
-            value: (props.score * 100).toFixed(1)
+            value: parseFloat(displayScore.value)
           }
         ]
       }

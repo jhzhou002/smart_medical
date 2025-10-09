@@ -111,11 +111,6 @@
       />
     </div>
 
-    <!-- 关键证据展示（新增） -->
-    <div v-if="hasAnyData" class="mb-6">
-      <EvidenceViewer :patient-id="currentPatient.patient_id" />
-    </div>
-
     <!-- 空状态 -->
     <div v-if="!hasAnyData" class="card text-center py-12">
       <el-empty description="暂无分析数据，请先上传患者数据" />
@@ -140,7 +135,6 @@ import { exportFHIR } from '@/api/database-analysis'
 import EditableTextArea from '@/components/EditableTextArea.vue'
 import EditableLabTable from '@/components/EditableLabTable.vue'
 import SmartDiagnosisPanel from '@/components/SmartDiagnosisPanel.vue'
-import EvidenceViewer from '@/components/EvidenceViewer.vue'
 import {ArrowLeft,
   Download,
   Document,

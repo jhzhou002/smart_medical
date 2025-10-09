@@ -21,7 +21,12 @@ export const extractKeyEvidence = (patientId) => api.get(`/db-analysis/evidence/
 export const detectLabAnomalies = (patientId) => api.get(`/db-analysis/anomalies/${patientId}`)
 
 /**
- * 智能诊断（数据库端）
+ * 查询患者最新智能诊断记录
+ */
+export const getSmartDiagnosis = (patientId) => api.get(`/db-analysis/smart-diagnosis/${patientId}`)
+
+/**
+ * 创建智能诊断（数据库端）
  */
 export const smartDiagnosis = (patientId) => api.post('/db-analysis/smart-diagnosis', { patient_id: patientId })
 
@@ -49,6 +54,7 @@ export default {
   getMultimodalData,
   extractKeyEvidence,
   detectLabAnomalies,
+  getSmartDiagnosis,
   smartDiagnosis,
   getMultimodalView,
   comprehensiveAnalysis,
