@@ -552,7 +552,7 @@ smart_medical/
 ## 👥 团队信息
 
 **开发者**: 周佳豪
-**邮箱**: 318352733@qq.com
+**邮箱**: jhzhou0704@163.com
 **GitHub**: [@jhzhou002](https://github.com/jhzhou002)
 
 ### 致谢
