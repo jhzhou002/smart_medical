@@ -5,9 +5,17 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
+// 根据环境选择 API 地址
+// 开发环境: 使用相对路径(通过 Vite proxy)
+// 生产环境: 使用环境变量或默认后端域名
+const baseURL = import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.MODE === 'production'
+    ? 'https://opentenbaseapi.aihubzone.cn/api'
+    : '/api')
+
 // 创建 axios 实例
 const api = axios.create({
-  baseURL: '/api',
+  baseURL,
   timeout: 60000, // AI 分析可能需要较长时间
   headers: {
     'Content-Type': 'application/json'
