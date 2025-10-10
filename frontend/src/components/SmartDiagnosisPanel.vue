@@ -70,19 +70,38 @@
         </p>
       </el-card>
 
-      <el-card v-if="formattedEvidenceSummary.length" class="evidence-summary" shadow="hover">
+      <el-card v-if="hasQualityScores" class="quality-assessment" shadow="hover">
         <template #header>
-          <span class="header-title">
-            <el-icon><DocumentCopy /></el-icon>
-            关键证据摘要
-          </span>
+          <div class="card-header">
+            <span class="header-title">
+              <el-icon><DataAnalysis /></el-icon>
+              数据质量评估
+            </span>
+            <el-tag v-if="diagnosisData.quality_adjusted" type="success" size="small">
+              已启用动态加权
+            </el-tag>
+          </div>
         </template>
-        <ul class="summary-list">
-          <li v-for="(item, index) in formattedEvidenceSummary" :key="index">
-            <el-icon color="#67C23A"><Check /></el-icon>
-            <span>{{ item }}</span>
-          </li>
-        </ul>
+        <div class="quality-scores">
+          <div class="quality-item" v-for="(score, modality) in qualityScores" :key="modality">
+            <div class="quality-header">
+              <span class="modality-name">{{ modalityNames[modality] }}</span>
+              <span class="score-value" :class="getQualityClass(score)">
+                {{ (score * 100).toFixed(0) }}%
+              </span>
+            </div>
+            <el-progress
+              :percentage="score * 100"
+              :color="getQualityColor(score)"
+              :stroke-width="12"
+              :show-text="false"
+            />
+            <div class="weight-info" v-if="baseWeights && baseWeights[modality]">
+              <span class="weight-label">基础权重：{{ (baseWeights[modality] * 100).toFixed(1) }}%</span>
+              <span class="weight-label">调整后：{{ (adjustedWeights && adjustedWeights[modality] ? adjustedWeights[modality] * 100 : 0).toFixed(1) }}%</span>
+            </div>
+          </div>
+        </div>
       </el-card>
 
       <el-card v-if="hasEvidenceDetail" class="evidence-detail" shadow="hover">
@@ -212,13 +231,12 @@ import {
   Operation,
   Calendar,
   Document,
-  DocumentCopy,
   Notebook,
-  Check,
   TrendCharts,
   Reading,
   List,
-  WarningFilled
+  WarningFilled,
+  DataAnalysis
 } from '@element-plus/icons-vue'
 import { getSmartDiagnosis, smartDiagnosis } from '@/api/database-analysis'
 import { ElMessage } from 'element-plus'
@@ -297,12 +315,41 @@ const labAnomalies = computed(() => {
   return []
 })
 
-// 证据摘要（后端已格式化为自然语言）
-const formattedEvidenceSummary = computed(() => {
-  const summary = diagnosisData.value?.evidence_summary
-  if (!summary || !Array.isArray(summary)) return []
-  return summary.filter(Boolean)
+// 质量评估相关
+const hasQualityScores = computed(() => {
+  return diagnosisData.value?.quality_scores &&
+         typeof diagnosisData.value.quality_scores === 'object'
 })
+
+const qualityScores = computed(() => {
+  return diagnosisData.value?.quality_scores || {}
+})
+
+const baseWeights = computed(() => {
+  return diagnosisData.value?.base_weights || null
+})
+
+const adjustedWeights = computed(() => {
+  return diagnosisData.value?.weights || null
+})
+
+const modalityNames = {
+  text: '病历文本',
+  ct: 'CT影像',
+  lab: '实验室检验'
+}
+
+const getQualityColor = (score) => {
+  if (score >= 0.8) return '#67C23A'  // 绿色
+  if (score >= 0.6) return '#E6A23C'  // 橙色
+  return '#F56C6C'  // 红色
+}
+
+const getQualityClass = (score) => {
+  if (score >= 0.8) return 'quality-high'
+  if (score >= 0.6) return 'quality-medium'
+  return 'quality-low'
+}
 
 // Z-Score 标签类型
 const getZScoreType = (zScore) => {
@@ -472,7 +519,6 @@ defineExpose({
 }
 
 .analysis-card,
-.evidence-summary,
 .evidence-detail,
 .recommendations,
 .warnings {
@@ -485,14 +531,12 @@ defineExpose({
   color: #4a4a4a;
 }
 
-.summary-list,
 .warning-list {
   margin: 0;
   padding-left: 0;
   list-style: none;
 }
 
-.summary-list li,
 .warning-list li {
   display: flex;
   align-items: flex-start;
@@ -503,7 +547,6 @@ defineExpose({
   color: #606266;
 }
 
-.summary-list li:last-child,
 .warning-list li:last-child {
   border-bottom: none;
 }
@@ -581,5 +624,73 @@ defineExpose({
 .abnormal-value {
   font-weight: 600;
   color: #F56C6C;
+}
+
+/* 质量评估样式 */
+.quality-assessment {
+  border-radius: 8px;
+}
+
+.quality-scores {
+  display: grid;
+  gap: 20px;
+  padding: 8px 0;
+}
+
+.quality-item {
+  padding: 16px;
+  background: #F5F7FA;
+  border-radius: 8px;
+  transition: all 0.3s;
+}
+
+.quality-item:hover {
+  background: #EBEEF5;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.quality-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.modality-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.score-value {
+  font-size: 18px;
+  font-weight: 700;
+  transition: color 0.3s;
+}
+
+.quality-high {
+  color: #67C23A;
+}
+
+.quality-medium {
+  color: #E6A23C;
+}
+
+.quality-low {
+  color: #F56C6C;
+}
+
+.weight-info {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #DCDFE6;
+}
+
+.weight-label {
+  font-size: 13px;
+  color: #909399;
 }
 </style>

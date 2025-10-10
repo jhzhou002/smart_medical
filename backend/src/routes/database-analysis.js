@@ -118,8 +118,7 @@ router.get('/smart-diagnosis/:patient_id', async (req, res, next) => {
         confidence_score as confidence,
         calibrated_confidence,
         risk_score,
-        evidence_json,
-        evidence_json->'summary' as evidence_summary,
+        evidence_json as evidence_json_full,
         diagnosis_basis as evidence_detail,
         treatment_plan as recommendations,
         medical_advice as warnings,
@@ -127,7 +126,10 @@ router.get('/smart-diagnosis/:patient_id', async (req, res, next) => {
         created_at as generated_at,
         status,
         doctor_review,
-        reviewed_at
+        reviewed_at,
+        quality_scores,
+        quality_adjusted,
+        base_weights
       FROM patient_diagnosis
       WHERE patient_id = $1
       ORDER BY created_at DESC
@@ -146,12 +148,87 @@ router.get('/smart-diagnosis/:patient_id', async (req, res, next) => {
     // 格式化数据
     const diagnosis = result.rows[0];
 
-    // 处理 recommendations 和 warnings
-    if (diagnosis.recommendations && typeof diagnosis.recommendations === 'string') {
-      diagnosis.recommendations = diagnosis.recommendations.split('\n').filter(line => line.trim());
+    // 从完整的 evidence_json 中提取字段
+    if (diagnosis.evidence_json_full) {
+      // 判断 evidence_json_full 是数组还是对象
+      if (Array.isArray(diagnosis.evidence_json_full)) {
+        // 如果是数组，说明是旧格式（只有 summary）
+        diagnosis.evidence_summary = diagnosis.evidence_json_full;
+        diagnosis.weights = null;
+      } else {
+        // 如果是对象，提取 summary 和 weights
+        diagnosis.evidence_summary = diagnosis.evidence_json_full.summary || [];
+        diagnosis.weights = diagnosis.evidence_json_full.weights || null;
+      }
+
+      // 删除完整的 evidence_json_full，避免数据冗余
+      delete diagnosis.evidence_json_full;
     }
-    if (diagnosis.warnings && typeof diagnosis.warnings === 'string') {
-      diagnosis.warnings = diagnosis.warnings.split('\n').filter(line => line.trim());
+
+    // 如果 weights 为空，但有 quality_scores 和 base_weights，则动态计算
+    if (!diagnosis.weights && diagnosis.quality_scores && diagnosis.base_weights && diagnosis.quality_adjusted) {
+      const qualityScores = diagnosis.quality_scores;
+      const baseWeights = diagnosis.base_weights;
+
+      // 计算调整后的权重
+      const adjustedText = (baseWeights.text || 0) * (qualityScores.text || 0);
+      const adjustedCt = (baseWeights.ct || 0) * (qualityScores.ct || 0);
+      const adjustedLab = (baseWeights.lab || 0) * (qualityScores.lab || 0);
+
+      // 归一化
+      const total = adjustedText + adjustedCt + adjustedLab;
+      if (total > 0) {
+        diagnosis.weights = {
+          text: adjustedText / total,
+          ct: adjustedCt / total,
+          lab: adjustedLab / total
+        };
+      }
+    }
+
+    // 处理 analysis 字段：如果是 JSON 对象，提取 analysis 字段
+    if (diagnosis.analysis && typeof diagnosis.analysis === 'object') {
+      // ai_diagnosis 是 JSON 对象，提取纯文本
+      if (diagnosis.analysis.analysis) {
+        diagnosis.analysis = diagnosis.analysis.analysis;
+      } else if (typeof diagnosis.analysis === 'object') {
+        // 如果没有 analysis 字段，转换为 JSON 字符串
+        diagnosis.analysis = JSON.stringify(diagnosis.analysis, null, 2);
+      }
+    }
+
+    // 修正风险评分：数据库存储的是 0-100 的值，需要转换为 0-1
+    if (diagnosis.risk_score !== undefined && diagnosis.risk_score !== null) {
+      diagnosis.risk_score = diagnosis.risk_score / 100;
+    }
+
+    // 记录质量评估信息
+    logger.info('查询到诊断记录的质量评估信息', {
+      patient_id,
+      diagnosis_id: diagnosis.diagnosis_id,
+      quality_scores: diagnosis.quality_scores,
+      base_weights: diagnosis.base_weights,
+      weights: diagnosis.weights,
+      quality_adjusted: diagnosis.quality_adjusted
+    });
+
+    // 处理 recommendations 和 warnings
+    if (diagnosis.recommendations) {
+      if (typeof diagnosis.recommendations === 'string') {
+        diagnosis.recommendations = diagnosis.recommendations.split('\n').filter(line => line.trim());
+      } else if (!Array.isArray(diagnosis.recommendations)) {
+        // 如果不是字符串也不是数组，尝试转换
+        diagnosis.recommendations = [];
+      }
+    }
+
+    if (diagnosis.warnings) {
+      if (typeof diagnosis.warnings === 'string') {
+        diagnosis.warnings = diagnosis.warnings.split('\n').filter(line => line.trim());
+      } else if (!Array.isArray(diagnosis.warnings)) {
+        // 如果不是字符串也不是数组，尝试转换
+        diagnosis.warnings = [];
+      }
     }
 
     // 处理 evidence_detail - 只保留有用的字段，移除完整表格数据
@@ -295,6 +372,17 @@ router.post('/smart-diagnosis', async (req, res, next) => {
       return res.status(500).json({
         success: false,
         error: 'Empty diagnosis result returned from database'
+      });
+    }
+
+    // 记录质量评估信息
+    if (diagnosis.quality_scores) {
+      logger.info('质量评估结果', {
+        patient_id,
+        quality_scores: diagnosis.quality_scores,
+        base_weights: diagnosis.base_weights,
+        adjusted_weights: diagnosis.weights,
+        quality_adjusted: diagnosis.quality_adjusted
       });
     }
 

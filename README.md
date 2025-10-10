@@ -4,8 +4,9 @@
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)
 ![OpenTenBase](https://img.shields.io/badge/OpenTenBase-AI%20Plugin-orange.svg)
-![PL/pgSQL](https://img.shields.io/badge/PL%2FpgSQL-612%20lines-blue.svg)
+![PL/pgSQL](https://img.shields.io/badge/PL%2FpgSQL-709%20lines-blue.svg)
 ![Vue3](https://img.shields.io/badge/Vue-3.x-42b883.svg)
+![Dynamic Weighting](https://img.shields.io/badge/Dynamic%20Weighting-Enabled-green.svg)
 
 > 基于 **OpenTenBase 分布式数据库**及其 **AI 插件（opentenbase_ai）**的医疗多模态智能分析系统
 >
@@ -68,6 +69,7 @@ SELECT ai.generate_text('生成诊断结论');
 | 功能 | 技术实现 | 特色 |
 |-----|---------|-----|
 | 🤖 **智能诊断** | PL/pgSQL 存储过程 `smart_diagnosis_v3()` | 融合多模态数据，生成结构化诊断报告 |
+| ⚖️ **动态加权** | 数据质量评估 + 权重自适应调整 | 根据数据完整性自动调整各模态权重 |
 | 🔍 **证据提取** | `extract_key_evidence()` + JSONB 存储 | 自动提取诊断依据，含权重和溯源 |
 | 📊 **异常检测** | Z-score 统计学算法 | 识别显著异常指标（轻度/中度/重度） |
 | 📈 **趋势分析** | 窗口函数 | 指标时间序列变化追踪 |
@@ -172,13 +174,31 @@ $$ LANGUAGE plpgsql;
 │    ├─ 调用 get_multimodal_data() 获取全部数据                │
 │    └─ 返回统一 JSONB 结构                                    │
 │    ↓                                                         │
-│  compute_evidence_profile(context) — 证据计算                │
+│  compute_evidence_profile(context) — 证据计算与动态加权        │
+│    ├─ 调用质量评估函数（数据库端）                            │
+│    │   ├─ evaluate_text_quality() - 文本质量评分             │
+│    │   │   • 摘要长度 (<50字符: 0.6x, <100字符: 0.8x)       │
+│    │   │   • 关键发现完整性 (缺失: 0.7x)                    │
+│    │   │   • 人工复核状态 (已复核: 1.2x)                    │
+│    │   ├─ evaluate_ct_quality() - CT影像质量评分             │
+│    │   │   • 分析完整度 (<100字符: 0.7x)                    │
+│    │   │   • 部位信息 (有部位: 1.1x)                        │
+│    │   │   • 人工复核 (已复核: 1.3x)                        │
+│    │   └─ evaluate_lab_quality() - 实验室质量评分            │
+│    │       • 指标数量 (<5个: 0.5x, <10个: 0.8x)             │
+│    │       • 异常数量 (有异常: 1.2x)                        │
+│    │       • 解读质量 (有解读: 1.3x)                        │
+│    ├─ 动态权重计算                                           │
+│    │   • 基础权重: 文本 33%, CT 33%, 实验室 34%             │
+│    │   • 调整权重 = 基础权重 × 质量分数                      │
+│    │   • 归一化: 保证权重总和 = 100%                        │
+│    │   • 示例: 文本质量0.5 → 调整后权重19.9%                │
 │    ├─ 调用 extract_key_evidence() 提取证据                   │
-│    │   ├─ 病历关键发现（权重 0.7）                           │
-│    │   ├─ CT 影像发现（权重 0.9）                            │
-│    │   └─ 异常指标（权重 0.8）                               │
+│    │   ├─ 病历关键发现（动态权重 19.9%）                    │
+│    │   ├─ CT 影像发现（动态权重 39.5%）                     │
+│    │   └─ 异常指标（动态权重 40.7%）                        │
 │    ├─ 每条证据包含：modality、finding、weight、data_id      │
-│    └─ 返回 JSONB 证据数组（含溯源信息）                      │
+│    └─ 返回 JSONB（含质量分数、权重、溯源信息）               │
 │    ↓                                                         │
 │  detect_lab_anomalies(patient_id) — 异常检测                 │
 │    ├─ 查询患者历史指标数据                                   │
@@ -262,6 +282,17 @@ $$ LANGUAGE plpgsql;
    - 风险评分基于统计学算法（Z-score）
    - 校准后的置信度更准确
 
+5. **动态加权机制** ⭐ 新增
+   - **数据质量自适应评估**：根据数据完整性自动调整各模态权重
+   - **多维度质量评分**：
+     - 文本：摘要长度、关键发现、人工复核
+     - CT：分析完整度、部位信息、人工复核
+     - 实验室：指标数量、异常检测、解读质量
+   - **权重归一化**：确保调整后权重总和为 100%
+   - **质量分数范围**：[0.3, 1.0]，避免极端值影响诊断
+   - **可视化展示**：前端显示质量评分进度条（绿/橙/红）
+   - **实际案例**：文本质量 50% → 权重从 33% 降至 19.9%
+
 ### 三、证据摘要智能格式化
 
 #### 问题背景
@@ -334,6 +365,7 @@ $$ LANGUAGE plpgsql;
 | 技术点 | 实现方式 | 优势 |
 |--------|---------|------|
 | **多模态关联** | 子查询 + `row_to_json()` | 一次查询获取所有数据 |
+| **动态加权** ⭐ | 质量评估函数 + 自适应计算 | 根据数据质量调整权重，提升诊断准确性 |
 | **异常检测** | Z-score 统计学算法 | 自动识别显著异常，无需人工阈值 |
 | **AI 调用** | `ai.generate_text()` 数据库内调用 | 减少网络传输，提升性能 |
 | **证据溯源** | JSONB `evidence_json` 含 `data_id` | 可回溯到原始数据 |
@@ -361,8 +393,9 @@ $$ LANGUAGE plpgsql;
 ┌─────────────────────────────────────────────┐
 │  数据库层 (OpenTenBase + AI 插件)            │
 │  ┌───────────────────────────────────┐     │
-│  │ PL/pgSQL 智能分析引擎 (612 行)    │     │
+│  │ PL/pgSQL 智能分析引擎 (709 行)    │     │
 │  │ - 多模态关联查询                   │     │
+│  │ - 数据质量评估（动态加权） ⭐      │     │
 │  │ - 证据提取与权重计算               │     │
 │  │ - 异常检测 (Z-score)              │     │
 │  │ - AI 诊断生成                     │     │
@@ -450,7 +483,10 @@ curl -X POST http://127.0.0.1:3000/api/db-analysis/smart-diagnosis \
 |-------|------|---------|
 | `smart_diagnosis_v3()` | 智能诊断主流程（编排） | 33 行 |
 | `prepare_diagnosis_context()` | 准备诊断上下文数据 | 108 行 |
-| `compute_evidence_profile()` | 计算证据权重 | 80 行 |
+| `compute_evidence_profile()` | 计算证据权重（含动态加权） | 80 行 |
+| `evaluate_text_quality()` | 病历文本质量评估 | 32 行 |
+| `evaluate_ct_quality()` | CT 影像质量评估 | 35 行 |
+| `evaluate_lab_quality()` | 实验室指标质量评估 | 30 行 |
 | `compute_risk_profile()` | 计算风险评分 | 37 行 |
 | `generate_ai_diagnosis()` | AI 诊断生成 | 95 行 |
 | `apply_confidence_calibration()` | 置信度校准 | 31 行 |
@@ -459,7 +495,7 @@ curl -X POST http://127.0.0.1:3000/api/db-analysis/smart-diagnosis \
 | `extract_key_evidence()` | 关键证据提取 | 50 行 |
 | `detect_lab_anomalies()` | Z-score 异常检测 | 55 行 |
 
-**总计：612 行 PL/pgSQL 代码**
+**总计：709 行 PL/pgSQL 代码**（含动态加权功能）
 
 ### API 接口
 
