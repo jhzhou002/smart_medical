@@ -45,7 +45,7 @@
             {{ formatDate(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" width="300">
+        <el-table-column label="操作" fixed="right" width="240">
           <template #default="{ row }">
             <el-button-group>
               <el-button
@@ -63,14 +63,6 @@
                 @click="viewLatestAnalysis(row)"
               >
                 查看分析
-              </el-button>
-              <el-button
-                type="info"
-                :icon="Clock"
-                size="small"
-                @click="viewHistory(row)"
-              >
-                历史记录
               </el-button>
               <el-button
                 type="danger"
@@ -269,42 +261,6 @@
       </template>
     </el-dialog>
 
-    <!-- 历史记录对话框 -->
-    <el-dialog
-      v-model="showHistoryDialog"
-      :title="`${currentPatient?.name} - 历史分析记录`"
-      width="900px"
-    >
-      <div v-loading="loadingHistory">
-        <el-timeline v-if="historyRecords.length > 0">
-          <el-timeline-item
-            v-for="record in historyRecords"
-            :key="record.id"
-            :timestamp="formatDateTime(record.created_at)"
-            placement="top"
-          >
-            <el-card>
-              <div class="history-item">
-                <div class="history-type">
-                  <el-tag :type="getRecordTypeTag(record.type)">{{ getRecordTypeName(record.type) }}</el-tag>
-                </div>
-                <div class="history-content">
-                  <p v-if="record.summary || record.ai_summary">{{ record.summary || record.ai_summary }}</p>
-                  <p v-if="record.analysis_result || record.ai_analysis">{{ record.analysis_result || record.ai_analysis }}</p>
-                  <p v-if="record.interpretation">{{ record.interpretation }}</p>
-                </div>
-                <div class="history-actions">
-                  <el-button type="primary" size="small" @click="viewAnalysisDetail(record)">
-                    查看详情
-                  </el-button>
-                </div>
-              </div>
-            </el-card>
-          </el-timeline-item>
-        </el-timeline>
-        <el-empty v-else description="暂无分析记录" />
-      </div>
-    </el-dialog>
   </div>
 </template>
 
@@ -313,7 +269,7 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePatientStore } from '@/stores/patient'
 import { ElMessageBox, ElMessage } from 'element-plus'
-import { Plus, Search, Edit, Document, Clock, Delete, View } from '@element-plus/icons-vue'
+import { Plus, Search, Document, Delete, View } from '@element-plus/icons-vue'
 import api from '@/utils/api'
 
 const router = useRouter()
@@ -343,13 +299,10 @@ const handleCurrentChange = (val) => {
 // 对话框状态
 const showCreateDialog = ref(false)
 const showViewDialog = ref(false)
-const showHistoryDialog = ref(false)
 const formRef = ref(null)
 const viewFormRef = ref(null)
 const updating = ref(false)
-const loadingHistory = ref(false)
 const currentPatient = ref(null)
-const historyRecords = ref([])
 const isEditing = ref(false)
 
 // 表单数据
@@ -559,76 +512,6 @@ const viewLatestAnalysis = (patient) => {
   router.push(`/analysis/${patient.patient_id}`)
 }
 
-// 查看历史记录
-const viewHistory = async (patient) => {
-  currentPatient.value = patient
-  showHistoryDialog.value = true
-  await fetchHistoryRecords(patient.patient_id)
-}
-
-// 获取历史分析记录
-const fetchHistoryRecords = async (patientId) => {
-  try {
-    loadingHistory.value = true
-
-    const [textRes, ctRes, labRes] = await Promise.all([
-      api.get(`/text-analysis/patient/${patientId}`).catch(() => ({ data: { data: [] } })),
-      api.get(`/ct-analysis/patient/${patientId}`).catch(() => ({ data: { data: [] } })),
-      api.get(`/lab-analysis/patient/${patientId}`).catch(() => ({ data: { data: [] } }))
-    ])
-
-    const records = [
-      ...(textRes.data.data || []).map(r => ({ ...r, type: 'text' })),
-      ...(ctRes.data.data || []).map(r => ({ ...r, type: 'ct' })),
-      ...(labRes.data.data || []).map(r => ({ ...r, type: 'lab' }))
-    ]
-
-    // 按时间倒序排序
-    historyRecords.value = records.sort((a, b) =>
-      new Date(b.created_at) - new Date(a.created_at)
-    )
-  } catch (error) {
-    console.error('获取历史记录失败:', error)
-    ElMessage.error('获取历史记录失败')
-  } finally {
-    loadingHistory.value = false
-  }
-}
-
-// 获取记录类型标签颜色
-const getRecordTypeTag = (type) => {
-  const tagMap = {
-    text: 'primary',
-    ct: 'success',
-    lab: 'warning'
-  }
-  return tagMap[type] || 'info'
-}
-
-// 获取记录类型名称
-const getRecordTypeName = (type) => {
-  const nameMap = {
-    text: '病历分析',
-    ct: 'CT影像',
-    lab: '实验室指标'
-  }
-  return nameMap[type] || '未知类型'
-}
-
-// 格式化日期时间
-const formatDateTime = (dateString) => {
-  if (!dateString) return '-'
-  const date = new Date(dateString)
-  return date.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  })
-}
-
 // 格式化病症文本（Markdown 转 HTML）
 const formatConditionText = (text) => {
   if (!text) return '<p class="text-gray-400">暂无病症信息</p>'
@@ -640,15 +523,6 @@ const formatConditionText = (text) => {
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     // 将 *文本* 转换为 <em>文本</em>
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-}
-
-// 查看分析详情
-const viewAnalysisDetail = (record) => {
-  // 根据记录类型跳转到对应的详情页面
-  router.push({
-    path: `/analysis/${currentPatient.value.patient_id}`,
-    query: { recordId: record.id, recordType: record.type }
-  })
 }
 
 // 生命周期

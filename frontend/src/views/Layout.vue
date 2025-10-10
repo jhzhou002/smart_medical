@@ -74,15 +74,7 @@
             </div>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="profile">
-                  <el-icon><User /></el-icon>
-                  个人中心
-                </el-dropdown-item>
-                <el-dropdown-item command="settings">
-                  <el-icon><Setting /></el-icon>
-                  系统设置
-                </el-dropdown-item>
-                <el-dropdown-item divided command="logout">
+                <el-dropdown-item command="logout">
                   <el-icon><SwitchButton /></el-icon>
                   退出登录
                 </el-dropdown-item>
@@ -104,7 +96,7 @@
       <!-- 页脚 -->
       <footer class="app-footer">
         <div class="footer-content">
-          <span>© 2024 医疗智能分析平台</span>
+          <span>© 2025 医疗智能分析平台</span>
           <span class="separator">|</span>
           <span>基于 OpenTenBase AI 插件</span>
         </div>
@@ -119,13 +111,11 @@ import { useRouter, useRoute } from 'vue-router'
 import {
   Document,
   User,
-  Setting,
   SwitchButton,
   Fold,
   Expand,
   ArrowDown,
   DataAnalysis,
-  Upload,
   Tickets
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
@@ -181,10 +171,6 @@ function toggleSidebar() {
 function handleCommand(command) {
   if (command === 'logout') {
     handleLogout()
-  } else if (command === 'profile') {
-    ElMessage.info('个人中心功能开发中')
-  } else if (command === 'settings') {
-    ElMessage.info('系统设置功能开发中')
   }
 }
 

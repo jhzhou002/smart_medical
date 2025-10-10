@@ -19,12 +19,15 @@ router.post('/register', async (req, res) => {
     const { username, name, password, role, department_id } = req.body;
 
     // 1. 参数验证
-    if (!username || !name || !password || !role || !department_id) {
+    if (!username || !name || !password || !role) {
       return res.status(400).json({
         success: false,
         message: '缺少必需参数'
       });
     }
+
+    // 如果未提供 department_id，使用默认科室（ID: 1 为默认科室）
+    const finalDepartmentId = department_id || 1;
 
     // 验证用户名格式
     if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
@@ -43,11 +46,11 @@ router.post('/register', async (req, res) => {
     }
 
     // 验证角色
-    const validRoles = ['admin', 'doctor_initial', 'doctor_radiology', 'doctor_laboratory', 'doctor_cardiology'];
+    const validRoles = ['admin', 'doctor'];
     if (!validRoles.includes(role)) {
       return res.status(400).json({
         success: false,
-        message: '无效的角色类型'
+        message: '无效的角色类型（仅支持 admin 或 doctor）'
       });
     }
 
@@ -64,17 +67,19 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    // 3. 验证科室是否存在
-    const dept = await query(
-      'SELECT id FROM departments WHERE id = $1',
-      [department_id]
-    );
+    // 3. 验证科室是否存在（如果提供了 department_id）
+    if (department_id) {
+      const dept = await query(
+        'SELECT id FROM departments WHERE id = $1',
+        [department_id]
+      );
 
-    if (dept.rows.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: '无效的科室ID'
-      });
+      if (dept.rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: '无效的科室ID'
+        });
+      }
     }
 
     // 4. 加密密码
@@ -85,7 +90,7 @@ router.post('/register', async (req, res) => {
       `INSERT INTO users (username, name, password_hash, role, department_id, status)
        VALUES ($1, $2, $3, $4, $5, 'active')
        RETURNING id, username, name, role, department_id, created_at`,
-      [username, name, hashedPassword, role, department_id]
+      [username, name, hashedPassword, role, finalDepartmentId]
     );
 
     const newUser = result.rows[0];

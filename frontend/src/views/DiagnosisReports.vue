@@ -153,45 +153,24 @@ const downloadReport = async (report) => {
   }
 }
 
-// 加载所有诊断报告
+// 加载所有诊断报告（使用优化的批量接口）
 const loadReports = async () => {
   loading.value = true
   try {
-    // 获取所有患者
-    const patientsRes = await api.get('/patients')
-    if (!patientsRes.data.success) {
-      throw new Error('获取患者列表失败')
+    // 调用批量查询接口，一次性获取所有患者的最新诊断报告
+    const diagnosisRes = await api.get('/diagnosis/all/latest')
+
+    if (!diagnosisRes.success) {
+      throw new Error('获取诊断报告失败')
     }
 
-    const patients = patientsRes.data.data
-    const reportsList = []
+    // 数据已经包含患者信息，直接使用
+    reports.value = diagnosisRes.data
 
-    // 为每个患者获取最新的诊断报告
-    for (const patient of patients) {
-      try {
-        const diagnosisRes = await api.get(`/diagnosis/patient/${patient.patient_id}`)
-        if (diagnosisRes.data.success && diagnosisRes.data.data.length > 0) {
-          const latestDiagnosis = diagnosisRes.data.data[0]
-          reportsList.push({
-            ...latestDiagnosis,
-            patient_name: patient.name,
-            patient_age: patient.age,
-            patient_gender: patient.gender
-          })
-        }
-      } catch (error) {
-        // 忽略单个患者的错误
-        console.error(`获取患者 ${patient.patient_id} 的诊断失败:`, error)
-      }
-    }
-
-    // 按诊断时间倒序排序
-    reports.value = reportsList.sort((a, b) =>
-      new Date(b.created_at) - new Date(a.created_at)
-    )
+    ElMessage.success(`成功加载 ${reports.value.length} 份诊断报告`)
   } catch (error) {
     console.error('加载报告失败:', error)
-    ElMessage.error('加载报告失败')
+    ElMessage.error(error.message || '加载报告失败')
   } finally {
     loading.value = false
   }

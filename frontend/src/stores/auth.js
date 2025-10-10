@@ -17,13 +17,10 @@ export const useAuthStore = defineStore('auth', () => {
   const userName = computed(() => user.value?.name || '')
   const userDepartment = computed(() => user.value?.department_name || '')
 
-  // 角色权限映射
+  // 角色权限映射（简化版）
   const rolePermissions = {
-    admin: ['all'],
-    doctor_initial: ['view_patients', 'create_order', 'view_diagnosis'],
-    doctor_radiology: ['view_ct', 'review_ct'],
-    doctor_laboratory: ['view_lab', 'review_lab'],
-    doctor_cardiology: ['view_all_data', 'create_diagnosis', 'create_prescription']
+    admin: ['all'], // 管理员拥有所有权限
+    doctor: ['view_patients', 'create_diagnosis', 'view_reports', 'upload_data'] // 医生基本权限
   }
 
   // 登录

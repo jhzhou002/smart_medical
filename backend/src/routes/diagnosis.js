@@ -201,6 +201,52 @@ ${aiDiagnosisText}
   }
 });
 
+// 获取所有患者的最新诊断报告（用于报告列表页面）
+router.get('/all/latest', async (req, res, next) => {
+  try {
+    logger.info('Fetching all latest diagnosis reports');
+
+    const sql = `
+      SELECT
+        pd.id,
+        pd.patient_id,
+        pd.diagnosis_text,
+        pd.confidence_score,
+        pd.risk_score,
+        pd.created_at,
+        p.name as patient_name,
+        p.age as patient_age,
+        p.gender as patient_gender
+      FROM patient_diagnosis pd
+      INNER JOIN LATERAL (
+        SELECT id, patient_id, diagnosis_text, confidence_score, risk_score, created_at
+        FROM patient_diagnosis
+        WHERE patient_id = pd.patient_id
+        ORDER BY created_at DESC
+        LIMIT 1
+      ) latest ON latest.id = pd.id
+      INNER JOIN patients p ON p.patient_id = pd.patient_id
+      ORDER BY pd.created_at DESC
+    `;
+
+    const result = await query(sql);
+
+    logger.info(`Found ${result.rows.length} diagnosis reports`);
+
+    res.json({
+      success: true,
+      data: result.rows,
+      meta: {
+        total: result.rows.length
+      }
+    });
+
+  } catch (error) {
+    logger.error('Failed to get all latest diagnosis', { error: error.message });
+    next(error);
+  }
+});
+
 router.get('/:patient_id', async (req, res, next) => {
   try {
     const { patient_id } = req.params;
