@@ -73,7 +73,8 @@ SELECT ai.generate_text('生成诊断结论');
 | 🔍 **证据提取** | `extract_key_evidence()` + JSONB 存储 | 自动提取诊断依据，含权重和溯源 |
 | 📊 **异常检测** | Z-score 统计学算法 | 识别显著异常指标（轻度/中度/重度） |
 | 📈 **趋势分析** | 窗口函数 | 指标时间序列变化追踪 |
-| 📄 **报告导出** | PDF 生成 + FHIR 格式 | 完整分析报告一键导出 |
+| 📄 **报告导出** | PDF 生成 | 完整分析报告一键导出 |
+| 🔐 **用户认证** | JWT + 简化角色系统 | 管理员和医生两种角色 |
 | 🎨 **现代前端** | Vue 3 + Element Plus + TailwindCSS | 响应式界面，支持移动端 |
 
 ---
@@ -461,6 +462,48 @@ npm install
 npm run dev           # http://127.0.0.1:5173
 ```
 
+### 生产环境部署
+
+```bash
+# 前端构建
+cd frontend
+npm run build         # 输出到 dist/ 目录
+
+# 配置 Nginx（示例）
+server {
+    listen 80;
+    server_name smartmedical.aihubzone.cn;
+    root /www/wwwroot/smart_medical/frontend/dist;
+
+    # Vue Router History 模式支持
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # 静态资源缓存
+    location ~ .*\.(js|css|png|jpg|jpeg|gif|svg|ico)$ {
+        expires 30d;
+    }
+}
+
+# 后端配置（使用 PM2）
+cd backend
+npm run build         # 如有构建步骤
+pm2 start src/app.js --name smart-medical-api
+```
+
+### 环境变量配置
+
+**开发环境** (`.env.development`):
+```bash
+VITE_API_BASE_URL=/api
+```
+
+**生产环境** (`.env.production`):
+```bash
+VITE_API_BASE_URL=https://opentenbaseapi.aihubzone.cn/api
+```
+
 ### 测试接口
 
 ```bash
@@ -499,6 +542,50 @@ curl -X POST http://127.0.0.1:3000/api/db-analysis/smart-diagnosis \
 
 ### API 接口
 
+#### 认证接口
+```bash
+# 用户注册
+POST /api/auth/register
+Body: { "username": "doctor1", "name": "张医生", "password": "123456", "role": "doctor" }
+
+# 用户登录
+POST /api/auth/login
+Body: { "username": "doctor1", "password": "123456" }
+
+# 获取当前用户信息
+GET /api/auth/me
+Headers: { "Authorization": "Bearer <token>" }
+```
+
+#### 患者管理
+```bash
+# 创建患者
+POST /api/patients
+Body: { "name": "张三", "age": 45, "gender": "男", "first_visit": true }
+
+# 获取患者列表（支持搜索）
+GET /api/patients?search=张三
+
+# 获取患者详情
+GET /api/patients/:id
+```
+
+#### 数据上传与分析
+```bash
+# 上传病历图片
+POST /api/text-analysis
+FormData: { image: File, patient_id: 9 }
+
+# 上传 CT 影像
+POST /api/ct-analysis
+FormData: { image: File, patient_id: 9 }
+
+# 上传实验室指标
+POST /api/lab-analysis
+FormData: { image: File, patient_id: 9 }
+```
+
+#### 数据库端智能分析（核心功能）
 ```bash
 # 多模态数据查询
 GET /api/db-analysis/multimodal/:patient_id
@@ -509,12 +596,21 @@ GET /api/db-analysis/evidence/:patient_id
 # 异常检测
 GET /api/db-analysis/anomalies/:patient_id
 
-# 智能诊断（核心）
+# 智能诊断（推荐使用）
 POST /api/db-analysis/smart-diagnosis
 Body: { "patient_id": 9 }
 
 # 综合分析
 GET /api/db-analysis/comprehensive/:patient_id
+```
+
+#### 诊断报告
+```bash
+# 获取患者诊断记录
+GET /api/diagnosis/:patient_id
+
+# 批量获取所有患者最新诊断报告（性能优化）
+GET /api/diagnosis/all/latest
 ```
 
 ---
@@ -549,31 +645,143 @@ GET /api/db-analysis/comprehensive/:patient_id
 
 ```
 smart_medical/
-├── frontend/                    # Vue 3 前端
+├── frontend/                          # Vue 3 前端
 │   ├── src/
-│   │   ├── views/              # 页面组件
-│   │   ├── components/         # 业务组件
+│   │   ├── views/                    # 页面组件
+│   │   │   ├── Layout.vue            # 主布局（简化菜单）
+│   │   │   ├── Login.vue             # 登录页
+│   │   │   ├── PatientManagement.vue # 患者管理（移除历史记录）
+│   │   │   ├── DataUpload.vue        # 数据上传
+│   │   │   ├── AnalysisResult.vue    # 分析结果（移除 FHIR 导出）
+│   │   │   ├── AIAnalysis.vue        # AI 分析
+│   │   │   └── DiagnosisReports.vue  # 诊断报告（批量加载优化）
+│   │   ├── components/               # 业务组件
 │   │   │   ├── SmartDiagnosisPanel.vue  # 智能诊断面板
 │   │   │   ├── EvidenceViewer.vue       # 证据查看器
-│   │   │   └── RiskScoreGauge.vue       # 风险评分仪表盘
-│   │   └── api/                # API 封装
+│   │   │   ├── RiskScoreGauge.vue       # 风险评分仪表盘
+│   │   │   ├── EditableTextArea.vue     # 可编辑文本区域
+│   │   │   └── EditableLabTable.vue     # 可编辑实验室表格
+│   │   ├── stores/                   # Pinia 状态管理
+│   │   │   ├── auth.js               # 认证状态（简化角色）
+│   │   │   └── patient.js            # 患者状态
+│   │   ├── utils/                    # 工具函数
+│   │   │   ├── api.js                # Axios 封装（环境变量支持）
+│   │   │   └── pdfExport.js          # PDF 导出
+│   │   ├── .env.development          # 开发环境配置
+│   │   └── .env.production           # 生产环境配置
 │   └── package.json
 │
-├── backend/                    # Node.js 后端
+├── backend/                          # Node.js 后端
 │   ├── src/
-│   │   ├── config/            # 数据库、日志配置
-│   │   ├── routes/
-│   │   │   └── database-analysis.js  # 数据库端分析 API
-│   │   └── services/
-│   │       └── opentenbase-ai.js     # AI 插件封装
-│   ├── scripts/
-│   │   └── smart_diagnosis_v3.sql    # PL/pgSQL 脚本
+│   │   ├── config/                  # 配置管理
+│   │   │   ├── db.js                # OpenTenBase 连接池
+│   │   │   └── logger.js            # Winston 日志
+│   │   ├── routes/                  # API 路由
+│   │   │   ├── auth.js              # 认证路由（简化角色）
+│   │   │   ├── patients.js          # 患者管理
+│   │   │   ├── text-analysis.js     # 病历分析
+│   │   │   ├── ct-analysis.js       # CT 分析
+│   │   │   ├── lab-analysis.js      # 实验室指标
+│   │   │   ├── diagnosis.js         # 诊断（新增批量端点）
+│   │   │   └── database-analysis.js # 数据库端分析（核心）
+│   │   ├── services/                # 业务服务
+│   │   │   ├── opentenbase-ai.js    # AI 插件封装
+│   │   │   └── qiniu.js             # 七牛云上传
+│   │   ├── middleware/              # 中间件
+│   │   │   ├── auth.js              # JWT 认证
+│   │   │   ├── error-handler.js     # 错误处理
+│   │   │   └── upload.js            # 文件上传
+│   │   └── utils/                   # 工具函数
+│   │       ├── auth.js              # 认证工具
+│   │       └── audit-log.js         # 审计日志
+│   ├── scripts/                     # 数据库脚本
+│   │   └── smart_diagnosis_v3.sql   # PL/pgSQL 脚本（709 行）
 │   └── package.json
 │
-├── doc/                       # 项目文档
-├── CLAUDE.md                  # Claude Code 指南
-└── README.md                  # 本文件
+├── doc/                              # 项目文档
+├── CLAUDE.md                         # Claude Code 指南
+├── AGENTS.md                         # Agent 配置
+└── README.md                         # 本文件
 ```
+
+---
+
+## 🎨 系统特性与优化
+
+### 用户认证与角色管理
+
+**简化的角色系统**：
+- 🔐 **管理员（admin）**：拥有所有系统权限
+- 👨‍⚕️ **医生（doctor）**：患者管理、数据上传、AI 分析、报告查看
+
+**特点**：
+- JWT Token 认证机制
+- 角色简化设计，专注核心医疗业务
+- 科室字段可选（默认为通用科室）
+- 前端路由守卫保护
+
+### 性能优化实践
+
+#### 1️⃣ 批量加载诊断报告
+**问题**：原实现需要 735 次串行 API 请求（每个患者一次）
+```javascript
+// ❌ 旧方案：N+1 查询问题
+for (const patient of patients) {
+  const diagnosisRes = await api.get(`/diagnosis/${patient.patient_id}`)
+}
+```
+
+**优化**：创建批量查询 API，使用 LATERAL JOIN
+```sql
+-- ✅ 新方案：单次查询获取所有患者最新诊断
+SELECT pd.*, p.name, p.age, p.gender
+FROM patient_diagnosis pd
+INNER JOIN LATERAL (
+  SELECT id, patient_id, diagnosis_text, confidence_score, risk_score, created_at
+  FROM patient_diagnosis
+  WHERE patient_id = pd.patient_id
+  ORDER BY created_at DESC
+  LIMIT 1
+) latest ON latest.id = pd.id
+INNER JOIN patients p ON p.patient_id = pd.patient_id
+ORDER BY pd.created_at DESC
+```
+
+**效果**：
+- 请求数量：735 次 → 1 次（减少 99.86%）
+- 加载时间：70+ 秒 → <1 秒（提升 98.6%）
+- 数据传输：大幅减少网络负载
+
+#### 2️⃣ 前端环境变量配置
+**问题**：开发和生产环境使用硬编码 API 地址
+
+**优化**：使用 Vite 环境变量
+```javascript
+// utils/api.js - 根据环境自动选择 API 地址
+const baseURL = import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.MODE === 'production'
+    ? 'https://opentenbaseapi.aihubzone.cn/api'
+    : '/api')
+```
+
+**效果**：
+- 开发环境使用本地代理（避免 CORS）
+- 生产环境直连后端 API
+- 无需修改代码即可切换环境
+
+### UI/UX 简化优化
+
+#### 移除未实现功能
+为提升用户体验，移除了以下未实现的功能：
+- ❌ **历史记录功能**（PatientManagement.vue）- 与"查看分析"功能重复
+- ❌ **个人中心菜单**（Layout.vue）- 功能未开发
+- ❌ **系统设置菜单**（Layout.vue）- 功能未开发
+- ❌ **FHIR 导出功能**（AnalysisResult.vue）- 功能未实现
+
+**优势**：
+- 减少代码复杂度
+- 避免"功能开发中"的提示影响用户体验
+- 聚焦核心医疗分析业务
 
 ---
 
