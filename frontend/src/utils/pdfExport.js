@@ -6,14 +6,30 @@
 import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
 import { createApp, h } from 'vue'
-import PDFReportTemplate from '@/components/PDFReportTemplate.vue'
+import PDFReportTemplateV2 from '@/components/PDFReportTemplateV2.vue'
 
 /**
- * 导出分析结果为 PDF (紧凑单页 A4 格式)
+ * 导出智能诊断报告为 PDF (A4 格式，支持动态加权)
  * @param {Object} patient - 患者信息
- * @param {Object} data - 分析数据 { textData, ctData, labData, diagnosisData }
+ * @param {Object} comprehensiveData - 综合诊断数据（来自 /api/db-analysis/comprehensive）
+ *   - comprehensiveData.diagnosis: 诊断数据对象
+ *   - comprehensiveData.multimodal: 多模态数据
+ *   - comprehensiveData.anomalies: 异常检测
  */
-export async function exportAnalysisReport(patient, data) {
+export async function exportAnalysisReport(patient, comprehensiveData) {
+  // 提取诊断数据
+  const diagnosisData = comprehensiveData.diagnosis || {};
+
+  // 调试：输出数据结构
+  console.log('=== PDF Export Data ===')
+  console.log('Patient:', patient)
+  console.log('Comprehensive Data:', comprehensiveData)
+  console.log('Diagnosis Data:', diagnosisData)
+  console.log('Multimodal Data:', comprehensiveData.multimodal)
+  console.log('Text Data:', comprehensiveData.multimodal?.text_data)
+  console.log('CT Data:', comprehensiveData.multimodal?.ct_data)
+  console.log('Lab Data:', comprehensiveData.multimodal?.lab_data)
+
   let tempContainer = null
   let app = null
 
@@ -35,9 +51,10 @@ export async function exportAnalysisReport(patient, data) {
     // 创建 Vue 应用实例并挂载 PDF 模板组件
     app = createApp({
       render() {
-        return h(PDFReportTemplate, {
+        return h(PDFReportTemplateV2, {
           patient,
-          data
+          diagnosisData,
+          comprehensiveData
         })
       }
     })
@@ -45,15 +62,15 @@ export async function exportAnalysisReport(patient, data) {
     app.mount(tempContainer)
 
     // 等待 DOM 渲染完成
-    await new Promise(resolve => setTimeout(resolve, 200))
+    await new Promise(resolve => setTimeout(resolve, 300))
 
-    const element = tempContainer.querySelector('#pdf-report-template')
+    const element = tempContainer.querySelector('#pdf-report-template-v2')
 
     if (!element) {
       throw new Error('未找到 PDF 报告模板元素')
     }
 
-    console.log('PDF模板数据:', { patient, data })
+    console.log('PDF模板数据:', { patient, diagnosisData })
     console.log('Element dimensions:', {
       scrollWidth: element.scrollWidth,
       scrollHeight: element.scrollHeight,
@@ -65,8 +82,8 @@ export async function exportAnalysisReport(patient, data) {
     })
 
     // 等待图片加载（如果有CT图片）
-    if (data.ctData?.ct_url) {
-      console.log('等待CT图片加载:', data.ctData.ct_url)
+    if (diagnosisData?.evidence_detail?.ct?.ct_url) {
+      console.log('等待CT图片加载:', diagnosisData.evidence_detail.ct.ct_url)
       const images = element.querySelectorAll('img')
       const imageLoadPromises = Array.from(images).map(img => {
         return new Promise((resolve) => {

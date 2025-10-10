@@ -464,21 +464,170 @@ router.get('/comprehensive/:patient_id', async (req, res, next) => {
 
     logger.info('综合分析请求', { patient_id });
 
-    // 并行调用多个函数
-    const [multimodalResult, evidenceResult, anomaliesResult] = await Promise.all([
+    // 并行调用多个函数，包括诊断数据查询
+    const [multimodalResult, evidenceResult, anomaliesResult, diagnosisResult] = await Promise.all([
       query('SELECT * FROM get_multimodal_data($1)', [patient_id]),
       query('SELECT extract_key_evidence($1) AS evidence', [patient_id]),
-      query('SELECT * FROM detect_lab_anomalies($1)', [patient_id])
+      query('SELECT * FROM detect_lab_anomalies($1)', [patient_id]),
+      query(
+        `SELECT
+          id as diagnosis_id,
+          patient_id,
+          diagnosis_text as diagnosis,
+          ai_diagnosis as analysis,
+          confidence_score as confidence,
+          calibrated_confidence,
+          risk_score,
+          evidence_json as evidence_json_full,
+          diagnosis_basis as evidence_detail,
+          treatment_plan as recommendations,
+          medical_advice as warnings,
+          diagnosed_at,
+          created_at as generated_at,
+          status,
+          doctor_review,
+          reviewed_at,
+          quality_scores,
+          quality_adjusted,
+          base_weights
+        FROM patient_diagnosis
+        WHERE patient_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1`,
+        [patient_id]
+      )
     ]);
+
+    let diagnosis = null;
+    const anomalies = anomaliesResult.rows || [];
+
+    // 处理诊断数据（如果存在）
+    if (diagnosisResult.rows.length > 0) {
+      diagnosis = diagnosisResult.rows[0];
+
+      // 从完整的 evidence_json 中提取字段
+      if (diagnosis.evidence_json_full) {
+        if (Array.isArray(diagnosis.evidence_json_full)) {
+          diagnosis.evidence_summary = diagnosis.evidence_json_full;
+          diagnosis.weights = null;
+        } else {
+          diagnosis.evidence_summary = diagnosis.evidence_json_full.summary || [];
+          diagnosis.weights = diagnosis.evidence_json_full.weights || null;
+        }
+        delete diagnosis.evidence_json_full;
+      }
+
+      // 动态计算权重
+      if (!diagnosis.weights && diagnosis.quality_scores && diagnosis.base_weights && diagnosis.quality_adjusted) {
+        const qualityScores = diagnosis.quality_scores;
+        const baseWeights = diagnosis.base_weights;
+
+        const adjustedText = (baseWeights.text || 0) * (qualityScores.text || 0);
+        const adjustedCt = (baseWeights.ct || 0) * (qualityScores.ct || 0);
+        const adjustedLab = (baseWeights.lab || 0) * (qualityScores.lab || 0);
+
+        const total = adjustedText + adjustedCt + adjustedLab;
+        if (total > 0) {
+          diagnosis.weights = {
+            text: adjustedText / total,
+            ct: adjustedCt / total,
+            lab: adjustedLab / total
+          };
+        }
+      }
+
+      // 处理 analysis 字段
+      if (diagnosis.analysis && typeof diagnosis.analysis === 'object') {
+        if (diagnosis.analysis.analysis) {
+          diagnosis.analysis = diagnosis.analysis.analysis;
+        } else if (typeof diagnosis.analysis === 'object') {
+          diagnosis.analysis = JSON.stringify(diagnosis.analysis, null, 2);
+        }
+      }
+
+      // 修正风险评分：数据库存储的是 0-100 的值，需要转换为 0-1
+      if (diagnosis.risk_score !== undefined && diagnosis.risk_score !== null) {
+        diagnosis.risk_score = diagnosis.risk_score / 100;
+      }
+
+      // 处理 recommendations 和 warnings
+      if (diagnosis.recommendations && typeof diagnosis.recommendations === 'string') {
+        diagnosis.recommendations = diagnosis.recommendations.split('\n').filter(line => line.trim());
+      }
+
+      if (diagnosis.warnings && typeof diagnosis.warnings === 'string') {
+        diagnosis.warnings = diagnosis.warnings.split('\n').filter(line => line.trim());
+      }
+
+      // 移除完整的实验室指标数据
+      if (diagnosis.evidence_detail && diagnosis.evidence_detail.lab) {
+        const { lab_json, indicators, indicator_json, data, values, ...labRest } = diagnosis.evidence_detail.lab;
+        diagnosis.evidence_detail.lab = labRest;
+      }
+
+      // 添加异常指标数据
+      diagnosis.lab_anomalies = anomalies;
+
+      // 处理 evidence_summary - 将 JSON 格式的检验指标转换为自然语言
+      if (diagnosis.evidence_summary && Array.isArray(diagnosis.evidence_summary)) {
+        diagnosis.evidence_summary = diagnosis.evidence_summary.map(item => {
+          if (typeof item === 'string' && item.includes('{') && item.includes('value')) {
+            try {
+              const prefixMatch = item.match(/^([^:：]*?[（\(]权重[^)）]*[)）][：:])/);
+              const prefix = prefixMatch ? prefixMatch[1] : '';
+
+              const fullJson = item.substring(item.indexOf('{'));
+              const indicators = JSON.parse(fullJson);
+
+              const abnormalDesc = [];
+              for (const [name, data] of Object.entries(indicators)) {
+                const isMarkedAbnormal = name.startsWith('*');
+                const cleanName = name.replace(/^\*/, '');
+                const anomaly = anomalies.find(a =>
+                  a.indicator && (a.indicator.includes(cleanName) || a.indicator === cleanName)
+                );
+
+                if (isMarkedAbnormal || anomaly) {
+                  let direction = '异常';
+                  let severityText = '';
+
+                  if (anomaly) {
+                    const zScore = parseFloat(anomaly.z_score);
+                    direction = zScore > 0 ? '偏高' : '偏低';
+                    if (anomaly.severity && anomaly.severity !== '轻度') {
+                      severityText = `，${anomaly.severity}`;
+                    }
+                    abnormalDesc.push(`${cleanName}${direction}：检测值 ${data.value}${data.unit || ''}${severityText}`);
+                  } else {
+                    abnormalDesc.push(`${cleanName}${direction}：检测值 ${data.value}${data.unit || ''}`);
+                  }
+                }
+              }
+
+              if (abnormalDesc.length > 0) {
+                return prefix.replace(/：$/, '') + '：' + abnormalDesc.join('；');
+              } else {
+                return prefix + '各项指标基本正常';
+              }
+            } catch (e) {
+              logger.warn('处理证据摘要失败', { error: e.message });
+              return item;
+            }
+          }
+          return item;
+        }).filter(Boolean);
+      }
+    }
 
     res.json({
       success: true,
       data: {
         patient_id: parseInt(patient_id),
-        multimodal_data: multimodalResult.rows[0] || null,
+        multimodal: multimodalResult.rows[0] || null,
         evidence: evidenceResult.rows[0]?.evidence || [],
-        anomalies: anomaliesResult.rows || [],
-        anomaly_count: anomaliesResult.rows.length
+        anomalies: anomalies,
+        anomaly_count: anomalies.length,
+        diagnosis: diagnosis
       },
       source: 'database_plpgsql',
       message: 'Comprehensive analysis completed'

@@ -484,7 +484,7 @@ defineExpose({
 }
 
 .main-diagnosis {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #409eff 0%, #3a8ee6 100%);
   color: #fff;
   border: none;
 }

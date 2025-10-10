@@ -295,17 +295,23 @@ const exportPDF = async () => {
 
   const loading = ElLoading.service({
     lock: true,
-    text: '正在生成 PDF 报告...',
+    text: '正在生成 PDF 报告，请稍候...',
     background: 'rgba(0, 0, 0, 0.7)'
   })
 
   try {
-    const result = await exportAnalysisReport(currentPatient.value, {
-      textData: textData.value,
-      ctData: ctData.value,
-      labData: labData.value,
-      diagnosisData: diagnosisData.value
-    })
+    // 获取完整的智能诊断数据
+    const comprehensiveRes = await api.get(`/db-analysis/comprehensive/${currentPatient.value.patient_id}`)
+
+    // api.js 响应拦截器已经返回 response.data，所以这里直接用 comprehensiveRes
+    if (!comprehensiveRes.success) {
+      throw new Error('获取智能诊断数据失败')
+    }
+
+    const comprehensiveData = comprehensiveRes.data
+
+    // 导出新版 PDF 报告
+    const result = await exportAnalysisReport(currentPatient.value, comprehensiveData)
 
     if (result.success) {
       ElMessage.success(`PDF 报告已导出: ${result.fileName}`)

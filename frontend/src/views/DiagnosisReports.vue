@@ -73,9 +73,10 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElLoading } from 'element-plus'
 import { Search, View, Download } from '@element-plus/icons-vue'
 import api from '@/utils/api'
+import { exportAnalysisReport } from '@/utils/pdfExport'
 
 const router = useRouter()
 
@@ -116,8 +117,40 @@ const viewReport = (report) => {
 
 // 导出报告
 const downloadReport = async (report) => {
-  ElMessage.info('PDF 导出功能开发中')
-  // TODO: 实现 PDF 导出
+  const loadingInstance = ElLoading.service({
+    lock: true,
+    text: '正在生成 PDF 报告，请稍候...',
+    background: 'rgba(0, 0, 0, 0.7)'
+  })
+
+  try {
+    // 获取完整的诊断数据
+    const comprehensiveRes = await api.get(`/db-analysis/comprehensive/${report.patient_id}`)
+
+    // api.js 响应拦截器已经返回 response.data，所以这里直接用 comprehensiveRes
+    if (!comprehensiveRes.success) {
+      throw new Error('获取诊断数据失败')
+    }
+
+    const comprehensiveData = comprehensiveRes.data
+
+    // 构造患者信息
+    const patient = {
+      name: report.patient_name,
+      age: report.patient_age,
+      gender: report.patient_gender,
+      patient_id: report.patient_id
+    }
+
+    // 导出 PDF
+    await exportAnalysisReport(patient, comprehensiveData)
+    ElMessage.success('PDF 报告导出成功')
+  } catch (error) {
+    console.error('PDF 导出失败:', error)
+    ElMessage.error(error.message || 'PDF 导出失败')
+  } finally {
+    loadingInstance.close()
+  }
 }
 
 // 加载所有诊断报告
