@@ -80,26 +80,7 @@
       />
     </div>
 
-    <!-- 综合诊断结论 -->
-    <div v-if="diagnosisData" class="card diagnosis-container">
-      <div class="diagnosis-header">
-        <h2 class="section-title flex items-center">
-          <el-icon class="mr-2" :size="22" color="#2F80ED"><CircleCheck /></el-icon>
-          综合诊断结论
-        </h2>
-      </div>
-
-      <div class="diagnosis-content">
-        <div class="diagnosis-text" v-html="formatSimpleDiagnosis(diagnosisData.diagnosis_text)"></div>
-      </div>
-
-      <!-- AI 声明 -->
-      <div class="ai-disclaimer">
-        <el-icon class="mr-1" color="#d9534f"><Warning /></el-icon>
-        <strong>重要声明：</strong>以上分析仅为AI辅助参考，不能替代专业医生的诊断，最终诊断请以主治医生意见为准。
-      </div>
-    </div>
-
+  
     <!-- 数据库端智能诊断（新增） -->
     <div v-if="hasAnyData" class="mb-6">
       <SmartDiagnosisPanel
@@ -135,9 +116,7 @@ import {ArrowLeft,
   Download,
   Document,
   PictureFilled,
-  DataAnalysis,
-  CircleCheck,
-  Warning
+  DataAnalysis
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -147,12 +126,11 @@ const patientStore = usePatientStore()
 const textData = ref(null)
 const ctData = ref(null)
 const labData = ref(null)
-const diagnosisData = ref(null)
 
 const currentPatient = computed(() => patientStore.currentPatient)
 
 const hasAnyData = computed(() => {
-  return textData.value || ctData.value || labData.value || diagnosisData.value
+  return textData.value || ctData.value || labData.value
 })
 
 const formatLabData = (labJson) => {
@@ -174,20 +152,6 @@ const handleDbDiagnosisComplete = (data) => {
   ElMessage.success('数据库端智能诊断已完成')
 }
 
-// 简单格式化诊断文本 - 隐藏格式符但保留格式效果
-const formatSimpleDiagnosis = (text) => {
-  if (!text) return ''
-
-  let formatted = text
-    // 处理加粗 **文本** -> <strong>文本</strong>
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    // 处理斜体 *文本* -> <em>文本</em>
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    // 处理换行
-    .replace(/\n/g, '<br>')
-
-  return formatted
-}
 
 const goBack = () => {
   router.back()
@@ -331,12 +295,7 @@ const loadAnalysisData = async (patientId) => {
       labData.value = labRes.data[0]
     }
 
-    // 加载诊断数据
-    const diagnosisRes = await api.get(`/diagnosis/${patientId}`)
-    if (diagnosisRes.success && diagnosisRes.data.length > 0) {
-      diagnosisData.value = diagnosisRes.data[0]
-    }
-  } catch (error) {
+    } catch (error) {
     console.error('加载分析数据失败:', error)
     ElMessage.error('加载分析数据失败')
   }
@@ -370,104 +329,4 @@ img {
   background-color: #F5F5F5;
 }
 
-/* ============================================
-   诊断报告样式 - 医疗报告风格
-   ============================================ */
-
-/* 诊断容器 */
-.diagnosis-container {
-  background: #ffffff;
-  padding: 0 !important;
-  overflow: hidden;
-}
-
-/* 诊断头部 */
-.diagnosis-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 20px 24px;
-  background: linear-gradient(135deg, #f0f7ff 0%, #ffffff 100%);
-  border-bottom: 2px solid #E3E8EF;
-}
-
-.diagnosis-header .section-title {
-  margin: 0;
-  font-size: 20px;
-  color: #2F80ED;
-}
-
-.confidence-badge {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
-}
-
-/* 诊断内容区 */
-.diagnosis-content {
-  padding: 24px 28px;
-  background: #fafbfc;
-}
-
-/* 诊断文本 */
-.diagnosis-text {
-  font-family: 'Microsoft YaHei', 'PingFang SC', -apple-system, sans-serif;
-  font-size: 14px;
-  line-height: 1.8;
-  color: #333;
-  word-wrap: break-word;
-  margin: 0;
-  padding: 0;
-  background: transparent;
-  border: none;
-}
-
-/* 加粗文本 */
-.diagnosis-text :deep(strong) {
-  font-weight: 600;
-  color: #1a1a1a;
-}
-
-/* 斜体文本 */
-.diagnosis-text :deep(em) {
-  font-style: italic;
-  color: #555;
-}
-
-/* AI 声明样式 */
-.ai-disclaimer {
-  display: flex;
-  align-items: center;
-  margin-top: 16px;
-  padding: 12px 16px;
-  background: #fff3cd;
-  border: 1px solid #ffc107;
-  border-radius: 6px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: #856404;
-}
-
-.ai-disclaimer strong {
-  color: #d9534f;
-  font-weight: 600;
-  margin-right: 4px;
-}
-
-/* 响应式优化 */
-@media (max-width: 768px) {
-  .diagnosis-content {
-    padding: 16px 20px;
-  }
-
-  .diagnosis-text {
-    font-size: 13px;
-  }
-
-  .ai-disclaimer {
-    font-size: 12px;
-    padding: 10px 14px;
-  }
-}
 </style>

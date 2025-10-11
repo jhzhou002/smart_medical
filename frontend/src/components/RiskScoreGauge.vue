@@ -22,6 +22,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import * as echarts from 'echarts'
+import { getRiskLevelText, getRiskColor, getRiskDescription, getGaugeColors } from '@/utils/riskLevel'
 
 const props = defineProps({
   score: {
@@ -49,33 +50,10 @@ const displayScore = computed(() => {
   return (safeScore.value * 100).toFixed(1)
 })
 
-// 计算风险等级
-const riskLevel = computed(() => {
-  const score = safeScore.value * 100
-  if (score < 30) return '低风险'
-  if (score < 60) return '中风险'
-  return '高风险'
-})
-
-// 计算风险颜色
-const riskColor = computed(() => {
-  const score = safeScore.value * 100
-  if (score < 30) return '#67C23A' // 绿色
-  if (score < 60) return '#E6A23C' // 橙色
-  return '#F56C6C' // 红色
-})
-
-// 风险描述
-const riskDescription = computed(() => {
-  const score = safeScore.value * 100
-  if (score < 30) {
-    return '患者整体状况良好，各项指标基本正常，建议定期复查。'
-  } else if (score < 60) {
-    return '患者存在一定风险，需要密切关注异常指标，建议进一步检查。'
-  } else {
-    return '患者风险较高，建议立即采取医疗干预措施，密切监测病情变化。'
-  }
-})
+// 使用共享的风险等级工具函数
+const riskLevel = computed(() => getRiskLevelText(safeScore.value))
+const riskColor = computed(() => getRiskColor(safeScore.value))
+const riskDescription = computed(() => getRiskDescription(safeScore.value))
 
 // 初始化图表
 const initChart = () => {
@@ -97,11 +75,7 @@ const initChart = () => {
         axisLine: {
           lineStyle: {
             width: 20,
-            color: [
-              [0.3, '#67C23A'],
-              [0.6, '#E6A23C'],
-              [1, '#F56C6C']
-            ]
+            color: getGaugeColors()
           }
         },
         pointer: {

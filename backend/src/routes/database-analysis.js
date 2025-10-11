@@ -3,6 +3,7 @@ const router = express.Router();
 const { query } = require('../config/db');
 const logger = require('../config/logger');
 const { writeAuditLog } = require('../utils/audit-log');
+const TaskService = require('../services/task-service');
 
 /**
  * 数据库端智能分析 API
@@ -70,36 +71,7 @@ router.get('/evidence/:patient_id', async (req, res, next) => {
 });
 
 // ============================================
-// 3. 异常检测（Z-score）
-// ============================================
-router.get('/anomalies/:patient_id', async (req, res, next) => {
-  try {
-    const { patient_id } = req.params;
-
-    logger.info('调用异常检测函数', { patient_id });
-
-    const result = await query(
-      'SELECT * FROM detect_lab_anomalies($1)',
-      [patient_id]
-    );
-
-    res.json({
-      success: true,
-      data: {
-        patient_id: parseInt(patient_id),
-        anomalies: result.rows,
-        total_anomalies: result.rows.length
-      },
-      source: 'database_plpgsql'
-    });
-  } catch (error) {
-    logger.error('异常检测失败', { error: error.message });
-    next(error);
-  }
-});
-
-// ============================================
-// 4. 智能诊断（核心）
+// 3. 智能诊断（核心）
 // ============================================
 
 // 4.1 查询患者最新智能诊断记录
@@ -242,19 +214,9 @@ router.get('/smart-diagnosis/:patient_id', async (req, res, next) => {
       }
     }
 
-    // 查询异常指标数据
-    let anomalies = [];
-    try {
-      const anomaliesResult = await query(
-        'SELECT * FROM detect_lab_anomalies($1)',
-        [patient_id]
-      );
-      anomalies = anomaliesResult.rows || [];
-      diagnosis.lab_anomalies = anomalies;
-    } catch (err) {
-      logger.warn('查询异常指标失败', { patient_id, error: err.message });
-      diagnosis.lab_anomalies = [];
-    }
+    // 初始化空的异常指标数据
+    const anomalies = [];
+    diagnosis.lab_anomalies = [];
 
     // 处理 evidence_summary - 将 JSON 格式的检验指标转换为自然语言
     if (diagnosis.evidence_summary && Array.isArray(diagnosis.evidence_summary)) {
@@ -284,39 +246,27 @@ router.get('/smart-diagnosis/:patient_id', async (req, res, next) => {
               return item;
             }
 
-            // 只保留异常指标（有星号前缀的或在anomalies中的）
+            // 显示异常指标（基于后端检测的异常指标数组）
             const abnormalDesc = [];
 
-            for (const [name, data] of Object.entries(indicators)) {
-              // 检查是否标记为异常（名称前有星号）
-              const isMarkedAbnormal = name.startsWith('*');
-              const cleanName = name.replace(/^\*/, '');
-
-              // 从anomalies中查找该指标
-              const anomaly = anomalies.find(a =>
-                a.indicator && (a.indicator.includes(cleanName) || a.indicator === cleanName)
-              );
-
-              if (isMarkedAbnormal || anomaly) {
-                let direction = '异常';
-                let severityText = '';
-
-                if (anomaly) {
-                  const zScore = parseFloat(anomaly.z_score);
-                  direction = zScore > 0 ? '偏高' : '偏低';
-
-                  const severity = anomaly.severity;
-                  if (severity && severity !== '轻度') {
-                    severityText = `，${severity}`;
-                  }
-
+            // 如果有后端检测的异常指标数据，使用这些数据
+            if (anomalies && Array.isArray(anomalies) && anomalies.length > 0) {
+              anomalies.forEach(anomaly => {
+                if (anomaly.indicator && anomaly.abnormal_type) {
                   abnormalDesc.push(
-                    `${cleanName}${direction}：检测值 ${data.value}${data.unit || ''}${severityText}`
+                    `${anomaly.indicator}${anomaly.abnormal_type}：检测值 ${anomaly.current_value}，正常范围 ${anomaly.normal_range}`
                   );
-                } else {
-                  // 没有anomaly数据但标记为异常
+                }
+              });
+            } else {
+              // 如果没有异常指标数据，检查指标名称是否有星号前缀（兼容旧数据）
+              for (const [name, data] of Object.entries(indicators)) {
+                const isMarkedAbnormal = name.startsWith('*');
+                const cleanName = name.replace(/^\*/, '');
+
+                if (isMarkedAbnormal) {
                   abnormalDesc.push(
-                    `${cleanName}${direction}：检测值 ${data.value}${data.unit || ''}`
+                    `${cleanName}异常：检测值 ${data.value}${data.unit || ''}`
                   );
                 }
               }
@@ -347,7 +297,7 @@ router.get('/smart-diagnosis/:patient_id', async (req, res, next) => {
   }
 });
 
-// 4.2 创建智能诊断
+// 4.2 创建智能诊断（异步模式）
 router.post('/smart-diagnosis', async (req, res, next) => {
   try {
     const { patient_id } = req.body;
@@ -359,62 +309,95 @@ router.post('/smart-diagnosis', async (req, res, next) => {
       });
     }
 
-    logger.info('调用智能诊断存储过程', { patient_id });
+    logger.info('创建智能诊断任务（异步模式）', { patient_id });
 
-    const result = await query(
-      'SELECT smart_diagnosis_v3($1) AS diagnosis',
-      [patient_id]
-    );
+    // 创建异步任务
+    const taskId = await TaskService.createTask(patient_id, 'smart_diagnosis');
 
-    const diagnosis = result.rows[0]?.diagnosis;
+    // 在后台异步执行诊断
+    TaskService.executeSmartDiagnosis(taskId, patient_id);
 
-    if (!diagnosis) {
-      return res.status(500).json({
-        success: false,
-        error: 'Empty diagnosis result returned from database'
-      });
-    }
-
-    // 记录质量评估信息
-    if (diagnosis.quality_scores) {
-      logger.info('质量评估结果', {
-        patient_id,
-        quality_scores: diagnosis.quality_scores,
-        base_weights: diagnosis.base_weights,
-        adjusted_weights: diagnosis.weights,
-        quality_adjusted: diagnosis.quality_adjusted
-      });
-    }
-
-    res.status(201).json({
+    // 立即返回任务 ID
+    res.status(202).json({
       success: true,
-      data: diagnosis,
-      message: 'Database-side smart diagnosis completed',
-      source: 'database_plpgsql'
+      data: {
+        task_id: taskId,
+        patient_id,
+        status: 'pending',
+        message: '智能诊断任务已创建，正在后台执行'
+      }
     });
 
+    // 记录审计日志
     try {
       await writeAuditLog({
         userId: req.user?.id || null,
-        action: 'analyze',
-        resource: 'patient_diagnosis',
-        resourceId: diagnosis.diagnosis_id || null,
+        action: 'create_task',
+        resource: 'analysis_tasks',
+        resourceId: taskId,
         metadata: {
           route: req.originalUrl,
           method: req.method,
-          generator: 'smart_diagnosis_v3'
+          task_type: 'smart_diagnosis',
+          patient_id
         },
-        request: req,
-        newValue: diagnosis
+        request: req
       });
     } catch (auditError) {
-      logger.warn('记录智能诊断审计日志失败', {
-        patient_id,
+      logger.warn('记录任务创建审计日志失败', {
+        task_id: taskId,
         error: auditError.message
       });
     }
   } catch (error) {
-    logger.error('智能诊断失败', { error: error.message, stack: error.stack });
+    logger.error('创建智能诊断任务失败', { error: error.message, stack: error.stack });
+    next(error);
+  }
+});
+
+// 4.3 查询任务状态
+router.get('/task/:task_id', async (req, res, next) => {
+  try {
+    const { task_id } = req.params;
+
+    logger.info('查询任务状态', { task_id });
+
+    const taskStatus = await TaskService.getTaskStatus(task_id);
+
+    res.json({
+      success: true,
+      data: taskStatus
+    });
+  } catch (error) {
+    logger.error('查询任务状态失败', { error: error.message });
+    next(error);
+  }
+});
+
+// 4.4 查询患者最新任务
+router.get('/task/patient/:patient_id', async (req, res, next) => {
+  try {
+    const { patient_id } = req.params;
+    const { task_type } = req.query;
+
+    logger.info('查询患者最新任务', { patient_id, task_type });
+
+    const latestTask = await TaskService.getLatestTask(patient_id, task_type);
+
+    if (!latestTask) {
+      return res.json({
+        success: true,
+        data: null,
+        message: 'No task found for this patient'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: latestTask
+    });
+  } catch (error) {
+    logger.error('查询患者最新任务失败', { error: error.message });
     next(error);
   }
 });
@@ -465,10 +448,9 @@ router.get('/comprehensive/:patient_id', async (req, res, next) => {
     logger.info('综合分析请求', { patient_id });
 
     // 并行调用多个函数，包括诊断数据查询
-    const [multimodalResult, evidenceResult, anomaliesResult, diagnosisResult] = await Promise.all([
+    const [multimodalResult, evidenceResult, diagnosisResult] = await Promise.all([
       query('SELECT * FROM get_multimodal_data($1)', [patient_id]),
       query('SELECT extract_key_evidence($1) AS evidence', [patient_id]),
-      query('SELECT * FROM detect_lab_anomalies($1)', [patient_id]),
       query(
         `SELECT
           id as diagnosis_id,
@@ -499,7 +481,7 @@ router.get('/comprehensive/:patient_id', async (req, res, next) => {
     ]);
 
     let diagnosis = null;
-    const anomalies = anomaliesResult.rows || [];
+    const anomalies = [];
 
     // 处理诊断数据（如果存在）
     if (diagnosisResult.rows.length > 0) {
@@ -580,26 +562,24 @@ router.get('/comprehensive/:patient_id', async (req, res, next) => {
               const indicators = JSON.parse(fullJson);
 
               const abnormalDesc = [];
-              for (const [name, data] of Object.entries(indicators)) {
-                const isMarkedAbnormal = name.startsWith('*');
-                const cleanName = name.replace(/^\*/, '');
-                const anomaly = anomalies.find(a =>
-                  a.indicator && (a.indicator.includes(cleanName) || a.indicator === cleanName)
-                );
 
-                if (isMarkedAbnormal || anomaly) {
-                  let direction = '异常';
-                  let severityText = '';
+              // 如果有后端检测的异常指标数据，使用这些数据
+              if (anomalies && Array.isArray(anomalies) && anomalies.length > 0) {
+                anomalies.forEach(anomaly => {
+                  if (anomaly.indicator && anomaly.abnormal_type) {
+                    abnormalDesc.push(
+                      `${anomaly.indicator}${anomaly.abnormal_type}：检测值 ${anomaly.current_value}，正常范围 ${anomaly.normal_range}`
+                    );
+                  }
+                });
+              } else {
+                // 如果没有异常指标数据，检查指标名称是否有星号前缀（兼容旧数据）
+                for (const [name, data] of Object.entries(indicators)) {
+                  const isMarkedAbnormal = name.startsWith('*');
+                  const cleanName = name.replace(/^\*/, '');
 
-                  if (anomaly) {
-                    const zScore = parseFloat(anomaly.z_score);
-                    direction = zScore > 0 ? '偏高' : '偏低';
-                    if (anomaly.severity && anomaly.severity !== '轻度') {
-                      severityText = `，${anomaly.severity}`;
-                    }
-                    abnormalDesc.push(`${cleanName}${direction}：检测值 ${data.value}${data.unit || ''}${severityText}`);
-                  } else {
-                    abnormalDesc.push(`${cleanName}${direction}：检测值 ${data.value}${data.unit || ''}`);
+                  if (isMarkedAbnormal) {
+                    abnormalDesc.push(`${cleanName}异常：检测值 ${data.value}${data.unit || ''}`);
                   }
                 }
               }
@@ -625,8 +605,6 @@ router.get('/comprehensive/:patient_id', async (req, res, next) => {
         patient_id: parseInt(patient_id),
         multimodal: multimodalResult.rows[0] || null,
         evidence: evidenceResult.rows[0]?.evidence || [],
-        anomalies: anomalies,
-        anomaly_count: anomalies.length,
         diagnosis: diagnosis
       },
       source: 'database_plpgsql',

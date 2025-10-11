@@ -16,7 +16,7 @@ const baseURL = import.meta.env.VITE_API_BASE_URL ||
 // 创建 axios 实例
 const api = axios.create({
   baseURL,
-  timeout: 60000, // AI 分析可能需要较长时间
+  timeout: 180000, // AI 分析需要较长时间，增加到3分钟
   headers: {
     'Content-Type': 'application/json'
   }
@@ -83,7 +83,11 @@ api.interceptors.response.use(
           message = data.message || `错误代码: ${status}`
       }
     } else if (error.request) {
-      message = '网络连接失败，请检查网络'
+      if (error.code === 'ECONNABORTED') {
+        message = '请求超时，AI分析时间较长，请稍后重试'
+      } else {
+        message = '网络连接失败，请检查网络'
+      }
     }
 
     ElMessage.error(message)

@@ -1,15 +1,11 @@
 <template>
   <div class="smart-diagnosis-panel">
-    <div class="action-section">
-      <el-button
-        type="primary"
-        size="large"
-        :loading="diagnosing"
-        :icon="MagicStick"
-        @click="performDiagnosis"
-      >
-        {{ diagnosing ? '正在分析…' : '一键智能诊断（数据库端）' }}
-      </el-button>
+    <!-- 诊断标题 -->
+    <div class="panel-header">
+      <h3 class="panel-title">
+        <el-icon><Operation /></el-icon>
+        智能诊断分析
+      </h3>
       <span v-if="diagnosisData" class="source-tag">
         <el-tag type="success" size="small">数据来源：PL/pgSQL 存储过程</el-tag>
       </span>
@@ -34,9 +30,9 @@
                   校准值 {{ calibratedPercent }}%
                 </el-tag>
               </el-tooltip>
-              <el-tooltip content="风险评分（基于检验异常与证据权重）" placement="top">
+              <el-tooltip content="风险评分（基于年龄、异常指标、数据完整度等多维度评估）" placement="top">
                 <el-tag :type="getRiskType(diagnosisData.risk_score)" size="large">
-                  风险 {{ riskPercent }}%
+                  {{ getRiskLevelText(diagnosisData.risk_score) }} {{ riskPercent }}%
                 </el-tag>
               </el-tooltip>
             </div>
@@ -144,26 +140,20 @@
               class="anomaly-table"
               :header-cell-style="{ background: '#FEF0F0', color: '#F56C6C' }"
             >
-              <el-table-column prop="indicator" label="指标" min-width="140" />
+              <el-table-column prop="indicator" label="指标" min-width="120" />
+              <el-table-column prop="abnormal_type" label="异常类型" min-width="80">
+                <template #default="{ row }">
+                  <el-tag :type="row.abnormal_type === '偏高' ? 'danger' : 'warning'" size="small">
+                    {{ row.abnormal_type }}
+                  </el-tag>
+                </template>
+              </el-table-column>
               <el-table-column prop="current_value" label="当前值" min-width="100">
                 <template #default="{ row }">
                   <span class="abnormal-value">{{ row.current_value }}</span>
                 </template>
               </el-table-column>
-              <el-table-column prop="z_score" label="Z-Score" min-width="100">
-                <template #default="{ row }">
-                  <el-tag v-if="row.z_score !== undefined" :type="getZScoreType(row.z_score)" size="small">
-                    {{ Number(row.z_score).toFixed(2) }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="severity" label="严重程度" min-width="100">
-                <template #default="{ row }">
-                  <el-tag :type="getSeverityType(row.severity)" size="small">
-                    {{ row.severity || '轻度' }}
-                  </el-tag>
-                </template>
-              </el-table-column>
+              <el-table-column prop="normal_range" label="正常范围" min-width="120" />
             </el-table>
           </div>
         </div>
@@ -212,20 +202,14 @@
       </el-card>
     </div>
 
-    <div v-else-if="loading" class="loading-state">
+    <div v-if="loading" class="loading-state">
       <el-skeleton :rows="5" animated />
     </div>
-
-    <el-empty
-      v-else-if="!diagnosing"
-      description="点击上方按钮开始智能诊断"
-      :image-size="150"
-    />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, defineProps, defineEmits, defineExpose } from 'vue'
+import { ref, computed, onMounted, onUnmounted, defineProps, defineEmits, defineExpose } from 'vue'
 import {
   MagicStick,
   Operation,
@@ -238,9 +222,10 @@ import {
   WarningFilled,
   DataAnalysis
 } from '@element-plus/icons-vue'
-import { getSmartDiagnosis, smartDiagnosis } from '@/api/database-analysis'
+import { getSmartDiagnosis, smartDiagnosis, getTaskStatus } from '@/api/database-analysis'
 import { ElMessage } from 'element-plus'
 import RiskScoreGauge from './RiskScoreGauge.vue'
+import { getRiskTagType, getRiskLevelText } from '@/utils/riskLevel'
 
 const props = defineProps({
   patientId: {
@@ -254,6 +239,9 @@ const emit = defineEmits(['diagnosis-complete'])
 const diagnosing = ref(false)
 const diagnosisData = ref(null)
 const loading = ref(false)
+const currentTaskId = ref(null)
+const pollingTimer = ref(null)
+const pollingCount = ref(0)
 
 const hasCalibratedConfidence = computed(() =>
   diagnosisData.value?.calibrated_confidence !== undefined &&
@@ -351,23 +339,6 @@ const getQualityClass = (score) => {
   return 'quality-low'
 }
 
-// Z-Score 标签类型
-const getZScoreType = (zScore) => {
-  const abs = Math.abs(Number(zScore))
-  if (abs >= 3) return 'danger'
-  if (abs >= 2) return 'warning'
-  return 'info'
-}
-
-// 严重程度标签类型
-const getSeverityType = (severity) => {
-  if (!severity) return 'info'
-  const s = severity.toLowerCase()
-  if (s.includes('严重') || s.includes('重度')) return 'danger'
-  if (s.includes('中度')) return 'warning'
-  return 'info'
-}
-
 const warnings = computed(() => {
   const warn = diagnosisData.value?.warnings
   if (!warn) return []
@@ -375,29 +346,122 @@ const warnings = computed(() => {
   return [warn].filter(Boolean)
 })
 
-const performDiagnosis = async () => {
-  diagnosing.value = true
+/**
+ * 停止轮询
+ */
+const stopPolling = () => {
+  if (pollingTimer.value) {
+    clearInterval(pollingTimer.value)
+    pollingTimer.value = null
+  }
+  pollingCount.value = 0
+}
+
+/**
+ * 轮询任务状态
+ */
+const pollTaskStatus = async (taskId) => {
   try {
-    ElMessage.info('正在调用数据库端 AI 分析，请稍候…')
+    const response = await getTaskStatus(taskId)
+    const task = response.data
 
-    const response = await smartDiagnosis(props.patientId)
-    diagnosisData.value = response.data
+    console.log(`轮询任务状态 (第${pollingCount.value}次):`, task.status)
 
-    ElMessage.success('智能诊断已完成')
-    emit('diagnosis-complete', response.data)
+    // 根据任务状态处理
+    if (task.status === 'completed') {
+      stopPolling()
+      diagnosing.value = false
+
+      // 从任务结果中提取诊断数据
+      diagnosisData.value = task.result
+
+      ElMessage.success({
+        message: '智能诊断已完成！',
+        duration: 3000
+      })
+
+      emit('diagnosis-complete', task.result)
+    } else if (task.status === 'failed') {
+      stopPolling()
+      diagnosing.value = false
+
+      ElMessage.error({
+        message: `智能诊断失败: ${task.error_message || '未知错误'}`,
+        duration: 5000
+      })
+    } else if (task.status === 'running' || task.status === 'pending') {
+      // 任务仍在运行，继续轮询
+      pollingCount.value++
+
+      // 根据轮询次数显示不同的提示
+      if (pollingCount.value === 6) {  // 30秒（每5秒一次）
+        ElMessage.info({
+          message: 'AI正在深度分析患者数据，请继续等待...',
+          duration: 5000
+        })
+      } else if (pollingCount.value === 18) {  // 90秒
+        ElMessage.info({
+          message: '复杂的多模态分析正在进行中，即将完成...',
+          duration: 5000
+        })
+      } else if (pollingCount.value === 36) {  // 3分钟
+        ElMessage.warning({
+          message: '诊断时间较长，请耐心等待或稍后查看结果...',
+          duration: 5000
+        })
+      }
+    }
   } catch (error) {
-    console.error('智能诊断失败:', error)
-    ElMessage.error('智能诊断失败，请稍后重试')
-  } finally {
-    diagnosing.value = false
+    console.error('轮询任务状态失败:', error)
+    // 不停止轮询，继续尝试
   }
 }
 
-const getRiskType = (score) => {
-  if (score >= 0.7) return 'danger'
-  if (score >= 0.4) return 'warning'
-  return 'success'
+/**
+ * 开始智能诊断（异步模式）
+ */
+const performDiagnosis = async () => {
+  diagnosing.value = true
+  stopPolling()  // 清除之前的轮询
+
+  try {
+    ElMessage.info({
+      message: 'AI智能诊断启动中，预计需要2-5分钟，请耐心等待...',
+      duration: 5000
+    })
+
+    // 创建异步任务
+    const response = await smartDiagnosis(props.patientId)
+    const { task_id } = response.data
+
+    if (!task_id) {
+      throw new Error('未获取到任务ID')
+    }
+
+    currentTaskId.value = task_id
+    console.log('智能诊断任务已创建:', task_id)
+
+    // 启动轮询（每5秒查询一次）
+    pollingCount.value = 0
+    pollingTimer.value = setInterval(() => {
+      pollTaskStatus(task_id)
+    }, 5000)
+
+    // 立即查询一次状态
+    pollTaskStatus(task_id)
+  } catch (error) {
+    console.error('创建智能诊断任务失败:', error)
+    diagnosing.value = false
+
+    ElMessage.error({
+      message: '创建智能诊断任务失败，请稍后重试',
+      duration: 5000
+    })
+  }
 }
+
+// 使用共享的风险等级工具函数
+const getRiskType = getRiskTagType
 
 const formatDate = (dateString) => {
   if (!dateString) return ''
@@ -427,8 +491,19 @@ const loadExistingDiagnosis = async () => {
   }
 }
 
-onMounted(() => {
-  loadExistingDiagnosis()
+onMounted(async () => {
+  // 先尝试加载已有的诊断记录
+  await loadExistingDiagnosis()
+
+  // 如果没有诊断记录，自动触发诊断
+  if (!diagnosisData.value) {
+    performDiagnosis()
+  }
+})
+
+// 组件卸载时清除定时器
+onUnmounted(() => {
+  stopPolling()
 })
 
 defineExpose({
@@ -446,13 +521,23 @@ defineExpose({
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
-.action-section {
-  text-align: center;
-  margin-bottom: 24px;
+.panel-header {
   display: flex;
-  justify-content: center;
+  justify-content: space-between;
   align-items: center;
-  gap: 16px;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid #f0f2f5;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: #2F80ED;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .source-tag {

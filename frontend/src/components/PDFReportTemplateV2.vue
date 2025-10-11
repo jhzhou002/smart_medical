@@ -162,17 +162,17 @@
           <thead>
             <tr>
               <th>指标</th>
+              <th>异常类型</th>
               <th>当前值</th>
-              <th>Z-Score</th>
-              <th>严重程度</th>
+              <th>正常范围</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="(anomaly, index) in labAnomalies" :key="index">
               <td>{{ anomaly.indicator }}</td>
+              <td>{{ anomaly.abnormal_type }}</td>
               <td class="abnormal-value">{{ anomaly.current_value }}</td>
-              <td>{{ Number(anomaly.z_score).toFixed(2) }}</td>
-              <td :class="getSeverityClass(anomaly.severity)">{{ anomaly.severity || '轻度' }}</td>
+              <td>{{ anomaly.normal_range }}</td>
             </tr>
           </tbody>
         </table>
@@ -341,14 +341,6 @@ const getRiskClass = (score) => {
   if (score >= 0.7) return 'risk-high'
   if (score >= 0.4) return 'risk-medium'
   return 'risk-low'
-}
-
-const getSeverityClass = (severity) => {
-  if (!severity) return ''
-  const s = severity.toLowerCase()
-  if (s.includes('严重') || s.includes('重度')) return 'severity-high'
-  if (s.includes('中度')) return 'severity-medium'
-  return 'severity-low'
 }
 </script>
 

@@ -239,13 +239,26 @@ const getIndicatorStatus = (row) => {
   const min = parseFloat(refMatch[1])
   const max = parseFloat(refMatch[2])
 
-  if (value < min || value > max) return 'danger'
+  if (value < min) return 'warning'  // 偏低用橙色
+  if (value > max) return 'danger'   // 偏高用红色
   return 'success'
 }
 
 const getIndicatorStatusText = (row) => {
-  const status = getIndicatorStatus(row)
-  return status === 'danger' ? '异常' : status === 'success' ? '正常' : '-'
+  if (!row.value || !row.reference) return '-'
+
+  const value = parseFloat(row.value)
+  if (isNaN(value)) return '-'
+
+  const refMatch = row.reference.match(/([\d.]+)-([\d.]+)/)
+  if (!refMatch) return '-'
+
+  const min = parseFloat(refMatch[1])
+  const max = parseFloat(refMatch[2])
+
+  if (value < min) return '偏低↓'
+  if (value > max) return '偏高↑'
+  return '正常'
 }
 </script>
 

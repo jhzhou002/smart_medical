@@ -18,6 +18,7 @@ DECLARE
   v_lab jsonb;
   v_lab_anomalies jsonb := '[]'::jsonb;
   v_previous jsonb := '[]'::jsonb;
+  v_abnormal_count integer := 0;
 BEGIN
   SELECT to_jsonb(row)
     INTO v_patient
@@ -88,10 +89,75 @@ BEGIN
      LIMIT 1
   ) AS row;
 
-  -- 捕获异常指标
-  SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb)
-    INTO v_lab_anomalies
-    FROM detect_lab_anomalies(p_patient_id) AS t;
+  -- 基于检测值与正常范围比较计算异常指标数量
+  v_lab_anomalies := '[]'::jsonb;
+
+  IF v_lab IS NOT NULL AND (v_lab ? 'lab_json') THEN
+    DECLARE
+      v_lab_data jsonb := COALESCE(v_lab->'lab_json', '{}'::jsonb);
+      v_key text;
+      v_indicator_value numeric;
+      v_reference text;
+      v_normal_min numeric;
+      v_normal_max numeric;
+      v_unit text;
+      v_is_abnormal boolean;
+      v_ref_parts text[];
+    BEGIN
+      FOR v_key IN SELECT jsonb_object_keys(v_lab_data) LOOP
+        v_is_abnormal := false;
+
+        -- 获取指标值
+        BEGIN
+          v_indicator_value := (v_lab_data->v_key->>'value')::numeric;
+        EXCEPTION WHEN OTHERS THEN
+          CONTINUE; -- 跳过无法转换为数字的值
+        END;
+
+        -- 🔧 修复：从reference字段解析正常范围
+        v_reference := v_lab_data->v_key->>'reference';
+        v_unit := COALESCE(v_lab_data->v_key->>'unit', '');
+
+        -- 解析 "3.97-9.15" 格式的正常范围
+        IF v_reference IS NOT NULL AND v_reference <> '' THEN
+          BEGIN
+            -- 使用正则表达式匹配 "数字-数字" 格式
+            v_ref_parts := regexp_match(v_reference, '([\d.]+)-([\d.]+)');
+
+            IF v_ref_parts IS NOT NULL THEN
+              v_normal_min := v_ref_parts[1]::numeric;
+              v_normal_max := v_ref_parts[2]::numeric;
+
+              -- 检查是否超出正常范围
+              IF v_indicator_value < v_normal_min OR v_indicator_value > v_normal_max THEN
+                v_abnormal_count := v_abnormal_count + 1;
+                v_is_abnormal := true;
+
+                -- 添加到异常数组
+                v_lab_anomalies := v_lab_anomalies || jsonb_build_object(
+                  'indicator', v_key,
+                  'is_abnormal', true,
+                  'current_value', v_indicator_value::text || v_unit,
+                  'normal_range', v_reference,
+                  'abnormal_type', CASE
+                    WHEN v_indicator_value < v_normal_min THEN '偏低'
+                    WHEN v_indicator_value > v_normal_max THEN '偏高'
+                    ELSE '正常'
+                  END
+                );
+              END IF;
+            END IF;
+          EXCEPTION WHEN OTHERS THEN
+            -- 如果解析失败，跳过该指标
+            CONTINUE;
+          END;
+        END IF;
+      END LOOP;
+    EXCEPTION
+      WHEN others THEN
+        v_lab_anomalies := '[]'::jsonb;
+    END;
+  END IF;
 
   -- 最近三条诊断，用于上下文
   SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb)
@@ -114,6 +180,7 @@ BEGIN
     'ct', v_ct,
     'lab', v_lab,
     'lab_anomalies', v_lab_anomalies,
+    'abnormal_count', v_abnormal_count,
     'previous_diagnosis', v_previous
   );
 END;
@@ -217,37 +284,129 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
   v_anomalies jsonb := COALESCE(p_context->'lab_anomalies', '[]'::jsonb);
-  v_anomaly_count integer := jsonb_array_length(v_anomalies);
+  v_anomaly_count integer := COALESCE((p_context->>'abnormal_count')::integer, jsonb_array_length(v_anomalies));
   v_weights jsonb := COALESCE(p_evidence->'weights', '{}'::jsonb);
   v_weight_lab numeric := COALESCE((v_weights->>'lab')::numeric, 0.34);
   v_weight_ct numeric := COALESCE((v_weights->>'ct')::numeric, 0.33);
-  v_base numeric := 0.2;
+  v_weight_text numeric := COALESCE((v_weights->>'text')::numeric, 0.33);
+
+  -- 患者基本信息
+  v_patient jsonb := COALESCE(p_context->'patient', '{}'::jsonb);
+  v_age integer := COALESCE((v_patient->>'age')::integer, 45);
+  v_gender text := COALESCE(v_patient->>'gender', '男');
+
+  -- 风险评分变量
+  v_base_risk numeric := 0.1;  -- 降低基础风险
   v_risk numeric;
   v_level text;
-BEGIN
-  v_risk := LEAST(
-    1.0,
-    GREATEST(
-      0.0,
-      v_base
-      + v_anomaly_count * 0.075
-      + v_weight_lab * 0.25
-      + v_weight_ct * 0.1
-    )
-  );
 
-  IF v_risk < 0.35 THEN
-    v_level := 'low';
-  ELSIF v_risk < 0.65 THEN
-    v_level := 'medium';
+  -- 异常指标严重程度评估
+  v_severe_anomaly_count integer := 0;
+  v_moderate_anomaly_count integer := 0;
+  v_mild_anomaly_count integer := 0;
+  v_anomaly_severity_score numeric := 0.0;
+
+  -- 计算变量
+  v_age_factor numeric := 0.0;
+  v_modality_risk_factor numeric := 0.0;
+  v_anomaly_risk_factor numeric := 0.0;
+  v_critical_indicator_risk numeric := 0.0;
+BEGIN
+  -- 1. 计算年龄风险因子（65岁以上风险增加）
+  IF v_age >= 65 THEN
+    v_age_factor := 0.15;  -- 老年患者基础风险增加
+  ELSIF v_age >= 45 THEN
+    v_age_factor := 0.05;  -- 中年患者轻微风险增加
+  END IF;
+
+  -- 2. 计算模态数据完整度风险因子
+  -- 数据不完整会增加风险评分
+  v_modality_risk_factor :=
+    CASE
+      WHEN (p_context->'text') IS NULL THEN 0.08  -- 缺少病历数据
+      ELSE 0.0
+    END +
+    CASE
+      WHEN (p_context->'ct') IS NULL THEN 0.06   -- 缺少CT数据
+      ELSE 0.0
+    END +
+    CASE
+      WHEN (p_context->'lab') IS NULL THEN 0.10  -- 缺少检验数据影响最大
+      ELSE 0.0
+    END;
+
+  -- 3. 计算异常指标严重程度评分
+  IF v_anomaly_count > 0 THEN
+    -- 遍历异常指标，评估严重程度
+    DECLARE
+      v_anomaly jsonb;
+      v_abnormal_type text;
+      v_indicator text;
+    BEGIN
+      FOR i IN 0..jsonb_array_length(v_anomalies)-1 LOOP
+        v_anomaly := v_anomalies->i;
+        v_abnormal_type := COALESCE(v_anomaly->>'abnormal_type', '未知');
+        v_indicator := COALESCE(v_anomaly->>'indicator', '');
+
+        -- 关键指标风险更高
+        IF v_indicator ~ '(白细胞|WBC|血红蛋白|Hb|血小板|PLT|血糖|血压|肌酐|Cr|尿素氮|BUN)' THEN
+          v_critical_indicator_risk := v_critical_indicator_risk + 0.1;
+        END IF;
+
+        -- 根据异常类型分配严重程度
+        -- 这里简化处理，实际可以根据偏离程度进一步细化
+        IF v_abnormal_type = '偏高' OR v_abnormal_type = '偏低' THEN
+          -- 假设偏离程度越高，风险越大（这里简化处理）
+          v_anomaly_severity_score := v_anomaly_severity_score + 0.8 / v_anomaly_count;
+        END IF;
+      END LOOP;
+    END;
+
+    -- 将异常评分限制在0-0.6之间，避免过度影响
+    v_anomaly_risk_factor := LEAST(0.6, v_anomaly_severity_score);
+  END IF;
+
+  -- 4. 综合风险评分计算（改进的权重分配）
+  v_risk := v_base_risk + v_age_factor + v_modality_risk_factor + v_anomaly_risk_factor + v_critical_indicator_risk;
+
+  -- 5. 模态权重调整（高质量数据降低风险）
+  v_risk := v_risk * (1.0 - (v_weight_lab * 0.15 + v_weight_ct * 0.10 + v_weight_text * 0.05));
+
+  -- 6. 限制在0-1范围内
+  v_risk := GREATEST(0.0, LEAST(1.0, v_risk));
+
+  -- 改进的风险等级判断（更符合医学实践）
+  IF v_risk < 0.25 THEN
+    v_level := 'low';      -- 低风险：健康状况良好
+  ELSIF v_risk < 0.45 THEN
+    v_level := 'medium';   -- 中风险：需要关注
+  ELSIF v_risk < 0.70 THEN
+    v_level := 'high';     -- 高风险：需要及时干预
   ELSE
-    v_level := 'high';
+    v_level := 'critical'; -- 危急风险：需要立即处理
   END IF;
 
   RETURN jsonb_build_object(
     'risk_score', v_risk,
     'risk_level', v_level,
-    'lab_anomaly_count', v_anomaly_count
+    'lab_anomaly_count', v_anomaly_count,
+    -- 详细的评分因子分解（用于调试和解释）
+    'risk_factors', jsonb_build_object(
+      'base_risk', v_base_risk,
+      'age_factor', v_age_factor,
+      'age', v_age,
+      'modality_completeness_risk', v_modality_risk_factor,
+      'lab_data_available', (p_context->'lab') IS NOT NULL,
+      'ct_data_available', (p_context->'ct') IS NOT NULL,
+      'text_data_available', (p_context->'text') IS NOT NULL,
+      'anomaly_risk_factor', v_anomaly_risk_factor,
+      'critical_indicator_risk', v_critical_indicator_risk,
+      'modality_weights', jsonb_build_object(
+        'lab', v_weight_lab,
+        'ct', v_weight_ct,
+        'text', v_weight_text
+      )
+    )
   );
 END;
 $$;

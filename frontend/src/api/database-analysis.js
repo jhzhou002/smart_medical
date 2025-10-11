@@ -16,19 +16,30 @@ export const getMultimodalData = (patientId) => api.get(`/db-analysis/multimodal
 export const extractKeyEvidence = (patientId) => api.get(`/db-analysis/evidence/${patientId}`)
 
 /**
- * 检测实验室指标异常（Z-score 算法）
- */
-export const detectLabAnomalies = (patientId) => api.get(`/db-analysis/anomalies/${patientId}`)
-
-/**
  * 查询患者最新智能诊断记录
  */
 export const getSmartDiagnosis = (patientId) => api.get(`/db-analysis/smart-diagnosis/${patientId}`)
 
 /**
- * 创建智能诊断（数据库端）
+ * 创建智能诊断（数据库端 - 异步模式）
+ * 立即返回任务ID，不等待执行完成
  */
-export const smartDiagnosis = (patientId) => api.post('/db-analysis/smart-diagnosis', { patient_id: patientId })
+export const smartDiagnosis = (patientId) => api.post('/db-analysis/smart-diagnosis', {
+  patient_id: patientId
+})
+
+/**
+ * 查询任务状态
+ */
+export const getTaskStatus = (taskId) => api.get(`/db-analysis/task/${taskId}`)
+
+/**
+ * 查询患者最新任务
+ */
+export const getPatientLatestTask = (patientId, taskType = null) => {
+  const params = taskType ? { task_type: taskType } : {}
+  return api.get(`/db-analysis/task/patient/${patientId}`, { params })
+}
 
 /**
  * 多模态视图查询
@@ -53,9 +64,10 @@ export const calibrateConfidence = (payload) => api.post('/db-analysis/calibrati
 export default {
   getMultimodalData,
   extractKeyEvidence,
-  detectLabAnomalies,
   getSmartDiagnosis,
   smartDiagnosis,
+  getTaskStatus,
+  getPatientLatestTask,
   getMultimodalView,
   comprehensiveAnalysis,
   exportFHIR,
