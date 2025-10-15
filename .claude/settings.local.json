@@ -20,7 +20,12 @@
       "Bash(cmd /c taskkill:*)",
       "Bash(del check-patient-id.js check-table.js create-first-time-test.js fix-schema.js install-functions.js test-first-time-analysis.js test-multimodal-api.js test-performance.js)",
       "Bash(del fix_lab_data_schema.sql fix_lab_simple.sql functions.sql generate_performance_data.sql init_multimodal.sql update_schema.sql)",
-      "Bash(del nul)"
+      "Bash(del nul)",
+      "Bash(del backendscriptscheck-diagnosis-records.js)",
+      "Bash(cmd /c del:*)",
+      "Bash(del backendscriptscomprehensive-diagnosis-check.js)",
+      "Bash(del:*)",
+      "Bash(cmd /c dir:*)"
     ],
     "deny": [],
     "ask": []

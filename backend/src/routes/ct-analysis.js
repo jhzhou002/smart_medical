@@ -83,8 +83,15 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
 
     // 3. 保存到数据库
     const insertSQL = `
-      INSERT INTO patient_ct_data (patient_id, body_part, ct_url, analysis_result)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO patient_ct_data (
+        patient_id,
+        body_part,
+        ct_url,
+        analysis_result,
+        status,
+        analyzed_at
+      )
+      VALUES ($1, $2, $3, $4, 'completed', NOW())
       RETURNING *
     `;
 

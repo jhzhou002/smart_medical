@@ -372,15 +372,27 @@ const pollTaskStatus = async (taskId) => {
       stopPolling()
       diagnosing.value = false
 
-      // 从任务结果中提取诊断数据
-      diagnosisData.value = task.result
+      // 任务完成后，重新从数据库查询格式化后的诊断数据
+      // 因为任务结果是原始数据，需要经过后端 API 的格式化处理
+      try {
+        const diagnosisResponse = await getSmartDiagnosis(props.patientId)
+        if (diagnosisResponse.success && diagnosisResponse.data) {
+          diagnosisData.value = diagnosisResponse.data
+        } else {
+          // 如果查询失败，使用任务结果作为降级方案
+          diagnosisData.value = task.result
+        }
+      } catch (error) {
+        console.error('查询格式化诊断数据失败，使用原始数据:', error)
+        diagnosisData.value = task.result
+      }
 
       ElMessage.success({
         message: '智能诊断已完成！',
         duration: 3000
       })
 
-      emit('diagnosis-complete', task.result)
+      emit('diagnosis-complete', diagnosisData.value)
     } else if (task.status === 'failed') {
       stopPolling()
       diagnosing.value = false

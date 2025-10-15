@@ -77,8 +77,8 @@ BEGIN
     INTO v_lab
   FROM (
     SELECT id,
-           COALESCE(final_interpretation, lab_json::text) AS interpretation,
-           lab_json,
+           COALESCE(final_interpretation, lab_data::text) AS interpretation,
+           lab_data,
            analyzed_at,
            reviewed_at,
            created_at
@@ -92,9 +92,9 @@ BEGIN
   -- 基于检测值与正常范围比较计算异常指标数量
   v_lab_anomalies := '[]'::jsonb;
 
-  IF v_lab IS NOT NULL AND (v_lab ? 'lab_json') THEN
+  IF v_lab IS NOT NULL AND (v_lab ? 'lab_data') THEN
     DECLARE
-      v_lab_data jsonb := COALESCE(v_lab->'lab_json', '{}'::jsonb);
+      v_lab_data jsonb := COALESCE(v_lab->'lab_data', '{}'::jsonb);
       v_key text;
       v_indicator_value numeric;
       v_reference text;
@@ -589,7 +589,33 @@ DECLARE
     'model', 'smart_diagnosis_v3',
     'warnings', v_warnings
   );
+  -- 修复: 预先转换 recommendations 和 warnings 数组为文本
+  v_treatment_text text;
+  v_advice_text text;
+  v_weights jsonb := COALESCE(p_evidence->'weights', '{}'::jsonb);
+  v_base_weights jsonb;
 BEGIN
+  -- 将 recommendations 数组转为换行分隔的文本
+  IF jsonb_array_length(v_recommendations) > 0 THEN
+    SELECT string_agg(value::text, E'\n')
+      INTO v_treatment_text
+      FROM jsonb_array_elements_text(v_recommendations);
+  ELSE
+    v_treatment_text := NULL;
+  END IF;
+
+  -- 将 warnings 数组转为换行分隔的文本
+  IF jsonb_array_length(v_warnings) > 0 THEN
+    SELECT string_agg(value::text, E'\n')
+      INTO v_advice_text
+      FROM jsonb_array_elements_text(v_warnings);
+  ELSE
+    v_advice_text := NULL;
+  END IF;
+
+  -- 提取基础权重
+  v_base_weights := v_weights;
+
   INSERT INTO patient_diagnosis (
     patient_id,
     diagnosis_text,
@@ -601,26 +627,24 @@ BEGIN
     risk_score,
     treatment_plan,
     medical_advice,
+    base_weights,
+    quality_adjusted,
     metadata,
     status,
     diagnosed_at
   ) VALUES (
     p_patient_id,
     v_diagnosis,
-    p_ai_result->>'raw_text',
+    v_analysis,  -- 修复: 使用解析后的 analysis 字段
     p_confidence,
     p_calibrated_confidence,
     v_evidence_detail,
     v_evidence_summary,
     COALESCE((p_risk->>'risk_score')::numeric, 0.0) * 100,
-    CASE
-      WHEN jsonb_array_length(v_recommendations) > 0 THEN v_recommendations->>0
-      ELSE NULL
-    END,
-    CASE
-      WHEN jsonb_array_length(v_recommendations) > 1 THEN (v_recommendations - 0)
-      ELSE NULL
-    END,
+    v_treatment_text,  -- 修复: 使用预先转换的文本
+    v_advice_text,     -- 修复: 使用预先转换的文本
+    v_base_weights,    -- 新增: 保存基础权重
+    false,             -- 新增: 标记未进行质量调整（暂时设为 false）
     v_metadata,
     'completed',
     NOW()

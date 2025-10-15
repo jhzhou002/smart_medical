@@ -590,7 +590,7 @@ const generateDiagnosis = async () => {
   diagnosisLoading.value = true
 
   try {
-    const response = await api.post('/diagnosis/generate', {
+    const response = await api.post('/db-analysis/smart-diagnosis', {
       patient_id: selectedPatient.value.patient_id
     })
 

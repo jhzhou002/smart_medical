@@ -177,25 +177,54 @@ class TaskService {
     // 使用 setImmediate 确保函数立即返回，任务在后台执行
     setImmediate(async () => {
       try {
-        logger.info(`开始执行智能诊断: task_id=${taskId}, patient_id=${patientId}`);
+        logger.info(`[诊断流程] 第1步: 开始执行智能诊断: task_id=${taskId}, patient_id=${patientId}`);
 
         // 标记任务开始
         await this.startTask(taskId);
+        logger.info(`[诊断流程] 第2步: 任务状态已更新为 running: task_id=${taskId}`);
 
         // 调用数据库存储过程执行智能诊断
+        logger.info(`[诊断流程] 第3步: 调用存储过程 smart_diagnosis_v3, patient_id=${patientId}`);
         const result = await query(
           `SELECT smart_diagnosis_v3($1) as diagnosis`,
           [patientId]
         );
 
         const diagnosisResult = result.rows[0].diagnosis;
+        logger.info(`[诊断流程] 第4步: 存储过程执行成功, 返回结果:`, {
+          diagnosis_id: diagnosisResult.diagnosis_id,
+          diagnosis: diagnosisResult.diagnosis?.substring(0, 100) + '...',
+          confidence: diagnosisResult.confidence,
+          risk_score: diagnosisResult.risk_score
+        });
+
+        // 检查 patient_diagnosis 表中的记录
+        logger.info(`[诊断流程] 第5步: 验证 patient_diagnosis 表中的记录是否完整`);
+        const verifyResult = await query(
+          `SELECT id, patient_id, status,
+                  CASE WHEN evidence_json IS NULL THEN 'NULL'
+                       WHEN evidence_json::text = '{}' THEN 'EMPTY_OBJECT'
+                       WHEN evidence_json::text = '[]' THEN 'EMPTY_ARRAY'
+                       ELSE 'HAS_DATA' END as evidence_json_status,
+                  CASE WHEN ai_diagnosis IS NULL THEN 'NULL'
+                       WHEN ai_diagnosis::text = '{}' THEN 'EMPTY_OBJECT'
+                       ELSE 'HAS_DATA' END as ai_diagnosis_status,
+                  CASE WHEN diagnosis_basis IS NULL THEN 'NULL'
+                       WHEN diagnosis_basis::text = '{}' THEN 'EMPTY_OBJECT'
+                       ELSE 'HAS_DATA' END as diagnosis_basis_status
+           FROM patient_diagnosis
+           WHERE id = $1`,
+          [diagnosisResult.diagnosis_id]
+        );
+
+        logger.info(`[诊断流程] 第6步: 数据库记录验证结果:`, verifyResult.rows[0]);
 
         // 标记任务完成
         await this.completeTask(taskId, diagnosisResult);
 
-        logger.info(`智能诊断完成: task_id=${taskId}, patient_id=${patientId}`);
+        logger.info(`[诊断流程] 第7步: 智能诊断完成: task_id=${taskId}, patient_id=${patientId}, diagnosis_id=${diagnosisResult.diagnosis_id}`);
       } catch (error) {
-        logger.error(`智能诊断执行失败: task_id=${taskId}`, {
+        logger.error(`[诊断流程] 执行失败: task_id=${taskId}`, {
           error: error.message,
           stack: error.stack
         });
