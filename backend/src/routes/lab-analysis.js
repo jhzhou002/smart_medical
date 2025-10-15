@@ -60,15 +60,22 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
     logger.info('Lab data extracted');
 
     const insertSQL = `
-      INSERT INTO patient_lab_data (patient_id, lab_url, lab_json)
-      VALUES ($1, $2, $3)
+      INSERT INTO patient_lab_data (
+        patient_id,
+        lab_url,
+        lab_data,
+        status,
+        analyzed_at
+      )
+      VALUES ($1, $2, $3, $4, NOW())
       RETURNING *
     `;
 
     const dbResult = await query(insertSQL, [
       patient_id,
       uploadResult.url,
-      JSON.stringify(aiResult)
+      JSON.stringify(aiResult),
+      'completed'
     ]);
 
     const taskSQL = `
@@ -92,7 +99,9 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
       id: dbResult.rows[0].id,
       patient_id: dbResult.rows[0].patient_id,
       lab_url: dbResult.rows[0].lab_url,
-      lab_json: dbResult.rows[0].lab_json,
+      lab_data: dbResult.rows[0].lab_data,
+      status: dbResult.rows[0].status,
+      analyzed_at: dbResult.rows[0].analyzed_at,
       created_at: dbResult.rows[0].created_at
     };
 
@@ -152,10 +161,10 @@ router.get('/patient/:patientId', async (req, res, next) => {
 router.put('/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { lab_json } = req.body;
+    const { lab_data } = req.body;
 
     // 验证参数
-    if (!lab_json) {
+    if (!lab_data) {
       return res.status(400).json({
         success: false,
         error: '实验室指标数据不能为空'
@@ -181,13 +190,13 @@ router.put('/:id', async (req, res, next) => {
     // 更新数据库（必须带上分片键）
     const updateSQL = `
       UPDATE patient_lab_data
-      SET lab_json = $1
+      SET lab_data = $1
       WHERE id = $2 AND patient_id = $3
       RETURNING *
     `;
 
     const result = await query(updateSQL, [
-      typeof lab_json === 'string' ? lab_json : JSON.stringify(lab_json),
+      typeof lab_data === 'string' ? lab_data : JSON.stringify(lab_data),
       id,
       patient_id
     ]);

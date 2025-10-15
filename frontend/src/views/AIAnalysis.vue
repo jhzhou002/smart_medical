@@ -194,7 +194,7 @@
             <div v-if="labResult" class="mt-4">
               <EditableLabTable
                 label="AI 实验室指标分析结果"
-                :model-value="formatLabData(labResult.lab_json)"
+                :model-value="formatLabData(labResult.lab_data)"
                 @save="handleSaveLabData"
               />
             </div>
@@ -679,9 +679,9 @@ const handleSaveLabData = async (labArray) => {
 
   try {
     // 将数组格式转换回对象格式
-    const labJsonObject = {}
+    const labDataObject = {}
     labArray.forEach(item => {
-      labJsonObject[item.name] = {
+      labDataObject[item.name] = {
         abbreviation: item.abbreviation || '',
         value: item.value,
         unit: item.unit,
@@ -690,11 +690,11 @@ const handleSaveLabData = async (labArray) => {
     })
 
     const response = await api.put(`/lab-analysis/${labResult.value.id}`, {
-      lab_json: labJsonObject
+      lab_data: labDataObject
     })
 
     if (response.success) {
-      labResult.value.lab_json = labJsonObject
+      labResult.value.lab_data = labDataObject
       ElMessage.success('实验室指标数据已更新')
     }
   } catch (error) {

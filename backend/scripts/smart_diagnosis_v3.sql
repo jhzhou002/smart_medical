@@ -250,11 +250,57 @@ BEGIN
   END IF;
 
   IF v_lab IS NOT NULL THEN
-    v_summary := v_summary || jsonb_build_array(
-      format('检验（权重 %s%%）：%s',
-             to_char(v_weight_lab * 100, 'FM999990.0'),
-             COALESCE(v_lab->>'interpretation', '暂无检验解读'))
-    );
+    -- 生成人类可读的实验室指标摘要
+    DECLARE
+      v_lab_summary text;
+      v_lab_data jsonb;
+      v_total_indicators integer := 0;
+      v_key text;
+    BEGIN
+      -- 安全获取 lab_data，确保是 jsonb 类型
+      BEGIN
+        v_lab_data := v_lab->'lab_data';
+
+        -- 检查 v_lab_data 是否为 jsonb 对象类型
+        IF v_lab_data IS NOT NULL AND jsonb_typeof(v_lab_data) = 'object' THEN
+          -- 统计指标数量
+          SELECT COUNT(*) INTO v_total_indicators FROM jsonb_object_keys(v_lab_data);
+          v_lab_summary := format('共检测 %s 项指标', v_total_indicators);
+
+          -- 添加异常指标摘要
+          IF jsonb_array_length(v_anomalies) > 0 THEN
+            v_lab_summary := v_lab_summary || format('，发现 %s 项异常：', jsonb_array_length(v_anomalies));
+
+            -- 列举关键异常指标（最多前5个）
+            FOR i IN 0..LEAST(4, jsonb_array_length(v_anomalies)-1) LOOP
+              v_key := v_anomalies->i->>'indicator';
+              v_lab_summary := v_lab_summary || format('%s%s（%s）',
+                CASE WHEN i > 0 THEN '、' ELSE '' END,
+                v_key,
+                v_anomalies->i->>'abnormal_type');
+            END LOOP;
+
+            IF jsonb_array_length(v_anomalies) > 5 THEN
+              v_lab_summary := v_lab_summary || format(' 等');
+            END IF;
+          ELSE
+            v_lab_summary := v_lab_summary || '，各项指标基本正常';
+          END IF;
+        ELSE
+          -- lab_data 不是有效的 jsonb 对象
+          v_lab_summary := '暂无有效的检验数据';
+        END IF;
+      EXCEPTION WHEN OTHERS THEN
+        -- 发生任何错误时的兜底处理
+        v_lab_summary := '检验数据解析失败';
+      END;
+
+      v_summary := v_summary || jsonb_build_array(
+        format('检验（权重 %s%%）：%s',
+               to_char(v_weight_lab * 100, 'FM999990.0'),
+               v_lab_summary)
+      );
+    END;
     v_detail := v_detail || jsonb_build_object('lab', v_lab);
   END IF;
 
