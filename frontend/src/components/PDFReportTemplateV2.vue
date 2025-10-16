@@ -31,9 +31,9 @@
       </div>
 
       <!-- 病历总结 -->
-      <div v-if="textData" class="section" data-page-section="text">
+      <div v-if="textSummary" class="section" data-page-section="text">
         <h2 class="section-title">📄 病历总结</h2>
-        <p class="section-content">{{ textData.summary }}</p>
+        <p class="section-content">{{ textSummary }}</p>
       </div>
 
       <!-- CT 影像分析 -->
@@ -89,18 +89,11 @@
 
           <div class="diagnosis-scores">
             <div class="score-item">
-              <span class="score-label">置信度</span>
-              <span class="score-value confidence">{{ (diagnosisData.confidence * 100).toFixed(0) }}%</span>
-            </div>
-            <div class="score-item" v-if="diagnosisData.calibrated_confidence">
-              <span class="score-label">校准值</span>
-              <span class="score-value calibrated">{{ (diagnosisData.calibrated_confidence * 100).toFixed(0) }}%</span>
-            </div>
-            <div class="score-item">
-              <span class="score-label">风险</span>
-              <span class="score-value" :class="getRiskClass(diagnosisData.risk_score)">
-                {{ (diagnosisData.risk_score * 100).toFixed(0) }}%
+              <span class="score-label">诊断置信度</span>
+              <span class="score-value" :class="getConfidenceClass(diagnosisData.risk_score || diagnosisData.confidence_level_score)">
+                {{ getConfidenceLevelText(diagnosisData.risk_score || diagnosisData.confidence_level_score || 0) }}
               </span>
+              <span class="score-percent">{{ ((diagnosisData.risk_score || diagnosisData.confidence_level_score || 0) * 100).toFixed(0) }}%</span>
             </div>
           </div>
         </div>
@@ -148,16 +141,12 @@
           <p class="evidence-content">{{ evidenceDetail.ct.analysis || '无影像分析' }}</p>
         </div>
 
-        <!-- 实验室指标 -->
-        <div v-if="evidenceDetail.lab" class="evidence-item">
-          <h4 class="evidence-title">检验</h4>
-          <p class="evidence-content">{{ evidenceDetail.lab.interpretation || '无检验解读' }}</p>
-        </div>
+        <!-- 检验部分已移除，使用下方的异常指标表格代替 -->
       </div>
 
-      <!-- 异常指标（新增） -->
+      <!-- 异常指标（新增严重程度分级） -->
       <div v-if="labAnomalies && labAnomalies.length" class="section anomalies-section" data-page-section="anomalies">
-        <h2 class="section-title">⚠️ 异常指标</h2>
+        <h2 class="section-title">⚠️ 异常指标（基于严重程度分级）</h2>
         <table class="anomalies-table">
           <thead>
             <tr>
@@ -165,6 +154,8 @@
               <th>异常类型</th>
               <th>当前值</th>
               <th>正常范围</th>
+              <th>严重程度</th>
+              <th>偏离程度</th>
             </tr>
           </thead>
           <tbody>
@@ -173,6 +164,12 @@
               <td>{{ anomaly.abnormal_type }}</td>
               <td class="abnormal-value">{{ anomaly.current_value }}</td>
               <td>{{ anomaly.normal_range }}</td>
+              <td :class="getSeverityClass(anomaly.severity_level)">
+                {{ anomaly.severity_level || '-' }}
+              </td>
+              <td class="deviation-value">
+                {{ anomaly.deviation_sigma ? anomaly.deviation_sigma + 'σ' : '-' }}
+              </td>
             </tr>
           </tbody>
         </table>
@@ -246,9 +243,17 @@ const labData = multimodal.lab_data
 
 const qualityScores = props.diagnosisData?.quality_scores
 const evidenceDetail = props.diagnosisData?.evidence_detail || {}
-const labAnomalies = props.diagnosisData?.lab_anomalies || []
 
-const hasEvidenceDetail = evidenceDetail.text || evidenceDetail.ct || evidenceDetail.lab
+// 提取病历总结（优先级：evidence_detail > multimodal > null）
+const textSummary = evidenceDetail.text?.summary || textData?.summary || null
+
+// 优先从 evidence_detail 获取异常指标数据（顶层的 lab_anomalies 可能为空）
+const labAnomalies = (props.diagnosisData?.evidence_detail?.lab_anomalies?.length > 0
+  ? props.diagnosisData.evidence_detail.lab_anomalies
+  : props.diagnosisData?.lab_anomalies) || []
+
+// 详细证据现在只包含病历和影像（检验数据通过异常指标表格单独展示）
+const hasEvidenceDetail = evidenceDetail.text || evidenceDetail.ct
 
 // 格式化实验室数据
 const formatLabData = (labJson) => {
@@ -341,6 +346,27 @@ const getRiskClass = (score) => {
   if (score >= 0.7) return 'risk-high'
   if (score >= 0.4) return 'risk-medium'
   return 'risk-low'
+}
+
+const getConfidenceClass = (score) => {
+  if (score >= 0.85) return 'confidence-very-high'
+  if (score >= 0.70) return 'confidence-high'
+  if (score >= 0.50) return 'confidence-medium'
+  return 'confidence-low'
+}
+
+const getConfidenceLevelText = (score) => {
+  if (score >= 0.85) return '极高置信度'
+  if (score >= 0.70) return '高置信度'
+  if (score >= 0.50) return '中等置信度'
+  return '低置信度'
+}
+
+const getSeverityClass = (severityLevel) => {
+  if (severityLevel === '严重异常') return 'severity-high'
+  if (severityLevel === '中度异常') return 'severity-medium'
+  if (severityLevel === '轻微异常') return 'severity-low'
+  return ''
 }
 </script>
 
@@ -587,9 +613,9 @@ const getRiskClass = (score) => {
   flex-direction: column;
   align-items: center;
   background: white;
-  padding: 8px 12px;
+  padding: 10px 14px;
   border-radius: 4px;
-  min-width: 60px;
+  min-width: 80px;
 }
 
 .score-label {
@@ -599,8 +625,28 @@ const getRiskClass = (score) => {
 }
 
 .score-value {
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.score-percent {
   font-size: 14px;
   font-weight: 700;
+  color: #303133;
+}
+
+.score-value.confidence-very-high,
+.score-value.confidence-high {
+  color: #67C23A;
+}
+
+.score-value.confidence-medium {
+  color: #E6A23C;
+}
+
+.score-value.confidence-low {
+  color: #F56C6C;
 }
 
 .score-value.confidence {
@@ -792,6 +838,13 @@ const getRiskClass = (score) => {
 .abnormal-value {
   font-weight: 700;
   color: #F56C6C;
+}
+
+.deviation-value {
+  font-weight: 600;
+  color: #909399;
+  font-family: 'Courier New', monospace;
+  font-size: 9px;
 }
 
 .severity-high {

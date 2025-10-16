@@ -149,7 +149,7 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
 
 /**
  * POST /api/text-analysis/save-condition
- * 保存患者最新病症为病历总结（不进行OCR，直接保存文本）
+ * 保存患者历史病症为病历总结（不进行OCR，直接保存文本）
  *
  * Body (application/json):
  * - patient_id: 患者 ID
@@ -174,7 +174,7 @@ router.post('/save-condition', async (req, res, next) => {
       });
     }
 
-    logger.info('保存患者最新病症为病历总结', { patient_id });
+    logger.info('保存患者历史病症为病历总结', { patient_id });
 
     // 存入数据库（image_url 为空，表示非图片上传）
     const insertSQL = `

@@ -219,10 +219,29 @@ class TaskService {
 
         logger.info(`[诊断流程] 第6步: 数据库记录验证结果:`, verifyResult.rows[0]);
 
+        // 更新患者最新病症信息
+        logger.info(`[诊断流程] 第7步: 更新患者表的最新病症信息`);
+        try {
+          await query(
+            `UPDATE patients
+             SET latest_condition = $1,
+                 condition_updated_at = NOW(),
+                 updated_at = NOW()
+             WHERE patient_id = $2`,
+            [diagnosisResult.diagnosis, patientId]
+          );
+          logger.info(`[诊断流程] 患者最新病症已更新: patient_id=${patientId}, diagnosis="${diagnosisResult.diagnosis?.substring(0, 50)}..."`);
+        } catch (updateError) {
+          logger.warn(`[诊断流程] 更新患者病症信息失败（继续执行）:`, {
+            error: updateError.message,
+            patient_id: patientId
+          });
+        }
+
         // 标记任务完成
         await this.completeTask(taskId, diagnosisResult);
 
-        logger.info(`[诊断流程] 第7步: 智能诊断完成: task_id=${taskId}, patient_id=${patientId}, diagnosis_id=${diagnosisResult.diagnosis_id}`);
+        logger.info(`[诊断流程] 第8步: 智能诊断完成: task_id=${taskId}, patient_id=${patientId}, diagnosis_id=${diagnosisResult.diagnosis_id}`);
       } catch (error) {
         logger.error(`[诊断流程] 执行失败: task_id=${taskId}`, {
           error: error.message,

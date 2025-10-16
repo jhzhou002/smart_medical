@@ -17,8 +17,8 @@ DECLARE
   v_quality numeric := 1.0;
   v_summary text;
   v_length integer;
-  v_key_findings text;
-  v_reviewed_at text;
+  v_key_findings jsonb;
+  v_key_findings_count integer := 0;
 BEGIN
   -- 检查是否为空
   IF p_text IS NULL THEN
@@ -36,25 +36,41 @@ BEGIN
   -- 计算摘要长度
   v_length := length(trim(v_summary));
 
-  -- 长度评估（过短说明信息不足）
+  -- 🔧 修改：基于摘要长度的阶梯式评分
+  -- 长度越长，信息越充分，质量越高
   IF v_length < 50 THEN
-    v_quality := v_quality * 0.6;  -- 降权 40%
+    v_quality := 0.4;  -- 过短，质量40%
   ELSIF v_length < 100 THEN
-    v_quality := v_quality * 0.8;  -- 降权 20%
-  ELSIF v_length > 500 THEN
-    v_quality := v_quality * 1.1;  -- 提权 10%（详细描述）
+    v_quality := 0.6;  -- 较短，质量60%
+  ELSIF v_length < 200 THEN
+    v_quality := 0.8;  -- 适中，质量80%
+  ELSIF v_length < 500 THEN
+    v_quality := 1.0;  -- 详细，质量100%
+  ELSE
+    v_quality := 1.0;  -- 非常详细，质量100%（不额外加分，避免冗长）
   END IF;
 
-  -- 关键发现评估
-  v_key_findings := p_text->>'key_findings';
-  IF v_key_findings IS NULL OR trim(v_key_findings) = '' THEN
-    v_quality := v_quality * 0.7;  -- 无关键发现，降权 30%
-  END IF;
+  -- 🔧 新增：关键发现数量评估（如果有key_findings字段）
+  v_key_findings := p_text->'key_findings';
+  IF v_key_findings IS NOT NULL THEN
+    -- 尝试解析关键发现（可能是数组或对象）
+    BEGIN
+      IF jsonb_typeof(v_key_findings) = 'array' THEN
+        v_key_findings_count := jsonb_array_length(v_key_findings);
+      ELSIF jsonb_typeof(v_key_findings) = 'object' THEN
+        SELECT count(*) INTO v_key_findings_count FROM jsonb_object_keys(v_key_findings);
+      END IF;
 
-  -- 人工复核加权（复核过的数据更可信）
-  v_reviewed_at := p_text->>'reviewed_at';
-  IF v_reviewed_at IS NOT NULL THEN
-    v_quality := v_quality * 1.2;  -- 提权 20%
+      -- 关键发现越多，质量越高（最多加10%）
+      IF v_key_findings_count >= 3 THEN
+        v_quality := v_quality * 1.1;
+      ELSIF v_key_findings_count > 0 THEN
+        v_quality := v_quality * 1.05;
+      END IF;
+    EXCEPTION WHEN others THEN
+      -- 解析失败，不影响质量评分
+      NULL;
+    END;
   END IF;
 
   -- 限制范围 [0.3, 1.0]
@@ -62,7 +78,7 @@ BEGIN
 END;
 $$;
 
-COMMENT ON FUNCTION evaluate_text_quality(jsonb) IS '评估文本模态数据质量：摘要长度、关键发现、人工复核';
+COMMENT ON FUNCTION evaluate_text_quality(jsonb) IS '评估文本模态数据质量：摘要长度（主要）、关键发现数量（次要）';
 
 
 -- ---------------------------------------------------------------
@@ -73,63 +89,19 @@ RETURNS numeric
 LANGUAGE plpgsql
 IMMUTABLE
 AS $$
-DECLARE
-  v_quality numeric := 1.0;
-  v_analysis text;
-  v_length integer;
-  v_body_part text;
-  v_reviewed_at text;
-  v_ct_url text;
 BEGIN
   -- 检查是否为空
   IF p_ct IS NULL THEN
     RETURN 0.0;
   END IF;
 
-  -- 提取分析结果
-  v_analysis := p_ct->>'analysis';
-
-  -- 无分析结果，严重降权（可能分析失败或图像不可读）
-  IF v_analysis IS NULL OR trim(v_analysis) = '' THEN
-    RETURN 0.4;
-  END IF;
-
-  -- 计算分析结果长度
-  v_length := length(trim(v_analysis));
-
-  -- 分析长度评估（过短说明分析不充分）
-  IF v_length < 100 THEN
-    v_quality := v_quality * 0.7;  -- 降权 30%
-  ELSIF v_length < 200 THEN
-    v_quality := v_quality * 0.9;  -- 降权 10%
-  ELSIF v_length > 500 THEN
-    v_quality := v_quality * 1.1;  -- 提权 10%（详细分析）
-  END IF;
-
-  -- 部位信息评估（有明确部位说明分析更规范）
-  v_body_part := p_ct->>'body_part';
-  IF v_body_part IS NOT NULL AND trim(v_body_part) != '' THEN
-    v_quality := v_quality * 1.1;  -- 提权 10%
-  END IF;
-
-  -- CT URL 检查（有URL说明图像可用）
-  v_ct_url := p_ct->>'ct_url';
-  IF v_ct_url IS NULL OR trim(v_ct_url) = '' THEN
-    v_quality := v_quality * 0.8;  -- 无图像URL，降权 20%
-  END IF;
-
-  -- 人工复核加权（影像复核更重要，医生专业判断）
-  v_reviewed_at := p_ct->>'reviewed_at';
-  IF v_reviewed_at IS NOT NULL THEN
-    v_quality := v_quality * 1.3;  -- 提权 30%
-  END IF;
-
-  -- 限制范围 [0.3, 1.0]
-  RETURN LEAST(1.0, GREATEST(0.3, v_quality));
+  -- 🔧 修改：只要有CT数据上传，质量就是100%
+  -- 原因：CT影像的质量主要由设备和技术决定，只要能成功上传和解析，就认为是高质量数据
+  RETURN 1.0;
 END;
 $$;
 
-COMMENT ON FUNCTION evaluate_ct_quality(jsonb) IS '评估CT影像模态数据质量：分析完整性、长度、部位、复核状态';
+COMMENT ON FUNCTION evaluate_ct_quality(jsonb) IS '评估CT影像模态数据质量：只要有CT数据，质量固定为100%';
 
 
 -- ---------------------------------------------------------------
@@ -145,56 +117,41 @@ IMMUTABLE
 AS $$
 DECLARE
   v_quality numeric := 1.0;
-  v_lab_json jsonb;
+  v_lab_data jsonb;
   v_indicator_count integer := 0;
-  v_interpretation text;
-  v_reviewed_at text;
 BEGIN
   -- 检查是否为空
   IF p_lab IS NULL THEN
     RETURN 0.0;
   END IF;
 
-  -- 提取实验室指标 JSON
-  v_lab_json := p_lab->'lab_json';
+  -- 🔧 修改：提取实验室指标数据（从 lab_data 字段）
+  v_lab_data := p_lab->'lab_data';
 
   -- 无实验室数据
-  IF v_lab_json IS NULL THEN
+  IF v_lab_data IS NULL OR jsonb_typeof(v_lab_data) != 'object' THEN
     RETURN 0.3;
   END IF;
 
   -- 计算指标数量
   BEGIN
     SELECT count(*) INTO v_indicator_count
-    FROM jsonb_object_keys(v_lab_json);
+    FROM jsonb_object_keys(v_lab_data);
   EXCEPTION WHEN others THEN
     v_indicator_count := 0;
   END;
 
-  -- 完整度评估（指标数量）
-  IF v_indicator_count < 5 THEN
-    v_quality := 0.5;  -- 指标太少，严重降权
+  -- 🔧 修改：基于指标数量的阶梯式评分（以15个为界限）
+  IF v_indicator_count = 0 THEN
+    v_quality := 0.3;  -- 无指标，质量30%
+  ELSIF v_indicator_count < 5 THEN
+    v_quality := 0.5;  -- 1-4个指标，质量50%
   ELSIF v_indicator_count < 10 THEN
-    v_quality := 0.8;  -- 指标较少，适度降权
-  ELSIF v_indicator_count >= 15 THEN
-    v_quality := 1.1;  -- 指标全面，提权 10%
-  END IF;
-
-  -- 异常指标加权（有异常说明数据有临床价值）
-  IF p_anomaly_count > 0 THEN
-    v_quality := v_quality * 1.2;  -- 提权 20%
-  END IF;
-
-  -- 人工解读加权
-  v_interpretation := p_lab->>'final_interpretation';
-  IF v_interpretation IS NOT NULL AND trim(v_interpretation) != '' THEN
-    v_quality := v_quality * 1.3;  -- 有专业解读，提权 30%
-  END IF;
-
-  -- 人工复核加权
-  v_reviewed_at := p_lab->>'reviewed_at';
-  IF v_reviewed_at IS NOT NULL THEN
-    v_quality := v_quality * 1.2;  -- 提权 20%
+    v_quality := 0.7;  -- 5-9个指标，质量70%
+  ELSIF v_indicator_count < 15 THEN
+    v_quality := 0.9;  -- 10-14个指标，质量90%
+  ELSE
+    v_quality := 1.0;  -- ≥15个指标，质量100%
   END IF;
 
   -- 限制范围 [0.3, 1.0]
@@ -202,7 +159,7 @@ BEGIN
 END;
 $$;
 
-COMMENT ON FUNCTION evaluate_lab_quality(jsonb, integer) IS '评估实验室指标模态数据质量：指标完整度、异常数量、人工解读';
+COMMENT ON FUNCTION evaluate_lab_quality(jsonb, integer) IS '评估实验室指标模态数据质量：指标数量（≥15个=100%）';
 
 
 -- ===================================================================

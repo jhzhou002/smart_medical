@@ -85,7 +85,7 @@
                 :closable="false"
                 class="mb-3"
               >
-                已自动加载患者病史信息（过往病史+最新病症），您可以在此基础上补充或修改后保存
+                已自动加载患者病史信息（过往病史+历史病症），您可以在此基础上补充或修改后保存
               </el-alert>
 
               <el-input
@@ -262,7 +262,7 @@ const uploadUrl = ref('') // 这里不需要实际的 action URL，我们会在 
 
 // 病历文本上传方式
 const textUploadMode = ref('image') // 'image' 或 'condition'
-const textConditionContent = ref('') // 最新病症内容
+const textConditionContent = ref('') // 历史病症内容
 
 // 病历文本
 const textLoading = ref(false)
@@ -297,7 +297,7 @@ const hasPatientHistory = computed(() => {
   return !!(selectedPatient.value.past_medical_history || selectedPatient.value.latest_condition)
 })
 
-// 组合患者病史信息（过往病史 + 最新病症）
+// 组合患者病史信息（过往病史 + 历史病症）
 const combinePatientHistory = (patient) => {
   if (!patient) return ''
 
@@ -308,7 +308,7 @@ const combinePatientHistory = (patient) => {
   }
 
   if (patient.latest_condition && patient.latest_condition.trim()) {
-    parts.push('【最新病症】\n' + patient.latest_condition.trim())
+    parts.push('【历史病症】\n' + patient.latest_condition.trim())
   }
 
   return parts.join('\n\n')
@@ -355,7 +355,7 @@ const handleSelectPatient = (patientId) => {
     labResult.value = null
     diagnosisResult.value = null
 
-    // 加载病史信息内容（过往病史 + 最新病症）
+    // 加载病史信息内容（过往病史 + 历史病症）
     textConditionContent.value = combinePatientHistory(patient)
 
     // 如果有病史信息，默认选择 condition 模式，否则选择 image 模式
@@ -372,7 +372,7 @@ watch(textUploadMode, (newMode) => {
   }
 })
 
-// 保存最新病症为病历总结
+// 保存历史病症为病历总结
 const saveConditionAsText = async () => {
   if (!textConditionContent.value.trim()) {
     ElMessage.warning('请输入病历内容')

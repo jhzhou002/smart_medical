@@ -169,19 +169,24 @@ router.get('/smart-diagnosis/:patient_id', async (req, res, next) => {
       }
     }
 
-    // 修正风险评分：数据库存储的是 0-100 的值，需要转换为 0-1
+    // 修正置信度评分：数据库 risk_score 字段现在存储诊断置信度（0-100），需要转换为 0-1
+    // 注意：为了向后兼容，字段名仍为 risk_score，但语义已改为诊断置信度
     if (diagnosis.risk_score !== undefined && diagnosis.risk_score !== null) {
       diagnosis.risk_score = diagnosis.risk_score / 100;
+      // 同时暴露为 confidence_level_score 以便前端使用更清晰的命名
+      diagnosis.confidence_level_score = diagnosis.risk_score;
     }
 
-    // 记录质量评估信息
+    // 记录质量评估和置信度信息
     logger.info('查询到诊断记录的质量评估信息', {
       patient_id,
       diagnosis_id: diagnosis.diagnosis_id,
       quality_scores: diagnosis.quality_scores,
       base_weights: diagnosis.base_weights,
       weights: diagnosis.weights,
-      quality_adjusted: diagnosis.quality_adjusted
+      quality_adjusted: diagnosis.quality_adjusted,
+      confidence_score: diagnosis.confidence,  // AI模型返回的置信度
+      confidence_level_score: diagnosis.confidence_level_score  // 综合计算的诊断置信度
     });
 
     // 处理 recommendations 和 warnings
@@ -527,9 +532,12 @@ router.get('/comprehensive/:patient_id', async (req, res, next) => {
         }
       }
 
-      // 修正风险评分：数据库存储的是 0-100 的值，需要转换为 0-1
+      // 修正置信度评分：数据库 risk_score 字段现在存储诊断置信度（0-100），需要转换为 0-1
+      // 注意：为了向后兼容，字段名仍为 risk_score，但语义已改为诊断置信度
       if (diagnosis.risk_score !== undefined && diagnosis.risk_score !== null) {
         diagnosis.risk_score = diagnosis.risk_score / 100;
+        // 同时暴露为 confidence_level_score 以便前端使用更清晰的命名
+        diagnosis.confidence_level_score = diagnosis.risk_score;
       }
 
       // 处理 recommendations 和 warnings

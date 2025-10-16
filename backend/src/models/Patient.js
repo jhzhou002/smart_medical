@@ -268,9 +268,9 @@ class Patient {
   }
 
   /**
-   * 更新患者最新病症（AI 自动整合）
+   * 更新患者历史病症（AI 自动整合）
    * @param {number} patientId - 患者 ID
-   * @param {string} latestCondition - 最新病症内容
+   * @param {string} latestCondition - 历史病症内容
    * @returns {Promise<Object|null>} 更新后的患者信息
    */
   static async updateLatestCondition(patientId, latestCondition) {
@@ -289,10 +289,10 @@ class Patient {
         return null;
       }
 
-      logger.info('患者最新病症更新成功', { patient_id: patientId });
+      logger.info('患者历史病症更新成功', { patient_id: patientId });
       return result.rows[0];
     } catch (error) {
-      logger.error('更新患者最新病症失败', { patient_id: patientId, error: error.message });
+      logger.error('更新患者历史病症失败', { patient_id: patientId, error: error.message });
       throw error;
     }
   }

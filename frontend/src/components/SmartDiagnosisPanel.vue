@@ -19,23 +19,11 @@
               <el-icon><Operation /></el-icon>
               智能诊断结论
             </span>
-            <div class="scores">
-              <el-tooltip content="诊断置信度" placement="top">
-                <el-tag type="success" size="large">
-                  置信度 {{ confidencePercent }}%
-                </el-tag>
-              </el-tooltip>
-              <el-tooltip v-if="hasCalibratedConfidence" content="校准后置信度" placement="top">
-                <el-tag type="info" size="large">
-                  校准值 {{ calibratedPercent }}%
-                </el-tag>
-              </el-tooltip>
-              <el-tooltip content="风险评分（基于年龄、异常指标、数据完整度等多维度评估）" placement="top">
-                <el-tag :type="getRiskType(diagnosisData.risk_score)" size="large">
-                  {{ getRiskLevelText(diagnosisData.risk_score) }} {{ riskPercent }}%
-                </el-tag>
-              </el-tooltip>
-            </div>
+            <el-tooltip content="诊断置信度评分（基于数据质量、完整度、异常指标等多维度评估，分数越高表示诊断结果越可信）" placement="top">
+              <el-tag :type="getConfidenceType(diagnosisData.risk_score)" size="large">
+                {{ getConfidenceLevelText(diagnosisData.risk_score) }} {{ confidenceLevelPercent }}%
+              </el-tag>
+            </el-tooltip>
           </div>
         </template>
 
@@ -131,7 +119,7 @@
 
           <!-- 仅显示异常指标（完整的实验室指标详情已在上方展示，此处不重复） -->
           <div v-if="labAnomalies.length" class="anomalies-section">
-            <h5 class="anomaly-title">异常指标</h5>
+            <h5 class="anomaly-title">异常指标（基于严重程度分级）</h5>
             <el-table
               :data="labAnomalies"
               size="small"
@@ -153,6 +141,26 @@
                 </template>
               </el-table-column>
               <el-table-column prop="normal_range" label="正常范围" min-width="120" />
+              <el-table-column prop="severity_level" label="严重程度" min-width="100">
+                <template #default="{ row }">
+                  <el-tag
+                    v-if="row.severity_level"
+                    :type="getSeverityType(row.severity_level)"
+                    size="small"
+                  >
+                    {{ row.severity_level }}
+                  </el-tag>
+                  <span v-else class="no-severity">-</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="deviation_sigma" label="偏离程度" min-width="90">
+                <template #default="{ row }">
+                  <span v-if="row.deviation_sigma" class="deviation-value">
+                    {{ row.deviation_sigma }}σ
+                  </span>
+                  <span v-else class="no-deviation">-</span>
+                </template>
+              </el-table-column>
             </el-table>
           </div>
         </div>
@@ -186,23 +194,31 @@
           </li>
         </ul>
       </el-card>
-
-      <el-card class="risk-visualization" shadow="hover">
-        <template #header>
-          <span class="header-title">
-            <el-icon><TrendCharts /></el-icon>
-            风险评分可视化
-          </span>
-        </template>
-        <RiskScoreGauge
-          v-if="diagnosisData.risk_score !== undefined"
-          :score="diagnosisData.risk_score"
-        />
-      </el-card>
     </div>
 
     <div v-if="loading" class="loading-state">
       <el-skeleton :rows="5" animated />
+    </div>
+
+    <!-- 诊断进行中的状态 -->
+    <div v-if="diagnosing && !diagnosisData" class="diagnosing-state">
+      <el-card shadow="hover">
+        <div class="diagnosing-content">
+          <el-icon class="rotating-icon" :size="48" color="#409EFF">
+            <Loading />
+          </el-icon>
+          <h3>AI 智能诊断进行中...</h3>
+          <p class="diagnosing-tip">正在调用 PL/pgSQL 存储过程进行多模态数据分析，预计需要 2-5 分钟</p>
+          <el-progress
+            :percentage="pollingProgress"
+            :status="pollingProgress >= 100 ? 'success' : undefined"
+            :show-text="false"
+          />
+          <p class="polling-info" v-if="pollingCount > 0">
+            已等待 {{ pollingCount * 5 }} 秒，请耐心等待...
+          </p>
+        </div>
+      </el-card>
     </div>
   </div>
 </template>
@@ -215,16 +231,14 @@ import {
   Calendar,
   Document,
   Notebook,
-  TrendCharts,
   Reading,
   List,
   WarningFilled,
-  DataAnalysis
+  DataAnalysis,
+  Loading
 } from '@element-plus/icons-vue'
 import { getSmartDiagnosis, smartDiagnosis, getTaskStatus } from '@/api/database-analysis'
 import { ElMessage } from 'element-plus'
-import RiskScoreGauge from './RiskScoreGauge.vue'
-import { getRiskTagType, getRiskLevelText } from '@/utils/riskLevel'
 
 const props = defineProps({
   patientId: {
@@ -242,23 +256,10 @@ const currentTaskId = ref(null)
 const pollingTimer = ref(null)
 const pollingCount = ref(0)
 
-const hasCalibratedConfidence = computed(() =>
-  diagnosisData.value?.calibrated_confidence !== undefined &&
-  diagnosisData.value?.calibrated_confidence !== null
-)
-
-const confidencePercent = computed(() => {
-  const value = diagnosisData.value?.confidence ?? 0
-  return Math.round(value * 100)
-})
-
-const calibratedPercent = computed(() => {
-  if (!hasCalibratedConfidence.value) return null
-  return Math.round((diagnosisData.value?.calibrated_confidence || 0) * 100)
-})
-
-const riskPercent = computed(() => {
-  const value = diagnosisData.value?.risk_score ?? 0
+const confidenceLevelPercent = computed(() => {
+  // 优先使用后端返回的 confidence_level_score（更清晰的命名）
+  // 否则使用 risk_score（向后兼容，但现在代表置信度）
+  const value = diagnosisData.value?.confidence_level_score ?? diagnosisData.value?.risk_score ?? 0
   return Math.round(value * 100)
 })
 
@@ -348,11 +349,28 @@ const getQualityClass = (score) => {
   return 'quality-low'
 }
 
+const getSeverityType = (severityLevel) => {
+  if (severityLevel === '严重异常') return 'danger'
+  if (severityLevel === '中度异常') return 'warning'
+  if (severityLevel === '轻微异常') return 'info'
+  return ''
+}
+
 const warnings = computed(() => {
   const warn = diagnosisData.value?.warnings
   if (!warn) return []
   if (Array.isArray(warn)) return warn
   return [warn].filter(Boolean)
+})
+
+/**
+ * 轮询进度（基于时间估算）
+ */
+const pollingProgress = computed(() => {
+  // 假设最长需要 3 分钟（36 次轮询 * 5秒），进度按轮询次数计算
+  const maxPolls = 36
+  const progress = Math.min(100, (pollingCount.value / maxPolls) * 100)
+  return Math.round(progress)
 })
 
 /**
@@ -481,8 +499,20 @@ const performDiagnosis = async () => {
   }
 }
 
-// 使用共享的风险等级工具函数
-const getRiskType = getRiskTagType
+// 诊断置信度评估函数（高分=高置信度=绿色）
+const getConfidenceType = (score) => {
+  if (score >= 0.85) return 'success'    // 绿色 - 极高置信度
+  if (score >= 0.70) return 'success'    // 绿色 - 高置信度
+  if (score >= 0.50) return 'warning'    // 橙色 - 中等置信度
+  return 'danger'                        // 红色 - 低置信度
+}
+
+const getConfidenceLevelText = (score) => {
+  if (score >= 0.85) return '极高置信度'
+  if (score >= 0.70) return '高置信度'
+  if (score >= 0.50) return '中等置信度'
+  return '低置信度'
+}
 
 const formatDate = (dateString) => {
   if (!dateString) return ''
@@ -582,11 +612,6 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 6px;
-}
-
-.scores {
-  display: flex;
-  gap: 12px;
 }
 
 .main-diagnosis {
@@ -700,10 +725,6 @@ defineExpose({
   flex: 1;
 }
 
-.risk-visualization {
-  border-radius: 8px;
-}
-
 .anomalies-section {
   margin-top: 16px;
   padding: 12px;
@@ -730,6 +751,18 @@ defineExpose({
 .abnormal-value {
   font-weight: 600;
   color: #F56C6C;
+}
+
+.deviation-value {
+  font-weight: 600;
+  color: #909399;
+  font-family: 'Courier New', monospace;
+}
+
+.no-severity,
+.no-deviation {
+  color: #DCDFE6;
+  font-style: italic;
 }
 
 /* 质量评估样式 */
@@ -798,5 +831,54 @@ defineExpose({
 .weight-label {
   font-size: 13px;
   color: #909399;
+}
+
+/* 诊断进行中状态样式 */
+.diagnosing-state {
+  margin-top: 20px;
+}
+
+.diagnosing-content {
+  text-align: center;
+  padding: 60px 20px;
+}
+
+.rotating-icon {
+  animation: rotate 2s linear infinite;
+  margin-bottom: 24px;
+}
+
+@keyframes rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.diagnosing-content h3 {
+  margin: 0 0 12px 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.diagnosing-tip {
+  color: #909399;
+  font-size: 14px;
+  margin: 0 0 32px 0;
+  line-height: 1.6;
+}
+
+.diagnosing-content .el-progress {
+  max-width: 400px;
+  margin: 0 auto 20px auto;
+}
+
+.polling-info {
+  font-size: 13px;
+  color: #606266;
+  margin: 12px 0 0 0;
 }
 </style>

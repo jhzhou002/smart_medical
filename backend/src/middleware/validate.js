@@ -71,7 +71,7 @@ const schemas = {
       'string.base': '过往病史必须是文本'
     }),
     latest_condition: Joi.string().allow('', null).messages({
-      'string.base': '最新病症必须是文本'
+      'string.base': '历史病症必须是文本'
     })
   }),
 

@@ -149,7 +149,7 @@
           </div>
         </el-form-item>
 
-        <el-form-item label="最新病症" prop="latest_condition">
+        <el-form-item label="历史病症" prop="latest_condition">
           <el-input
             v-model="formData.latest_condition"
             type="textarea"
@@ -238,7 +238,7 @@
           </div>
         </el-form-item>
 
-        <el-form-item label="最新病症">
+        <el-form-item label="历史病症">
           <div
             class="condition-display"
             v-html="formatConditionText(viewForm.latest_condition)"
