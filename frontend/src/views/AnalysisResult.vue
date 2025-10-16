@@ -75,7 +75,7 @@
 
       <EditableLabTable
         label="实验室检测指标"
-        :model-value="formatLabData(labData.lab_json)"
+        :model-value="formatLabData(labData.lab_data)"
         @save="handleSaveLabData"
       />
     </div>
@@ -260,11 +260,11 @@ const handleSaveLabData = async (newLabData) => {
     })
 
     const response = await api.put(`/lab-analysis/${labData.value.id}`, {
-      lab_json: labJson
+      lab_data: labJson
     })
 
     if (response.success) {
-      labData.value.lab_json = labJson
+      labData.value.lab_data = labJson
       ElMessage.success('实验室指标已更新')
     }
   } catch (error) {

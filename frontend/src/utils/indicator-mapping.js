@@ -124,17 +124,15 @@ export function codesToNames(codes) {
 export function extractIndicators(labData) {
   if (!labData) return []
 
-  // 格式1: lab_json 格式 (从 AI 识别结果)
+  // lab_data 格式 (从 AI 识别结果)
   // { "白细胞计数": {abbreviation: "WBC", value: 6.5, ...}, ... }
-  if (labData.lab_json) {
-    return Object.keys(labData.lab_json).filter(key => !key.startsWith('_'))
+  if (labData.lab_data) {
+    return Object.keys(labData.lab_data).filter(key => !key.startsWith('_'))
   }
 
-  // 格式2: lab_data 格式 (英文缩写)
-  // {WBC: 6.5, RBC: 4.5, ...} -> 转换为中文
-  if (labData.lab_data) {
-    const codes = Object.keys(labData.lab_data)
-    return codesToNames(codes)
+  // 兼容旧的 lab_json 字段（已废弃）
+  if (labData.lab_json) {
+    return Object.keys(labData.lab_json).filter(key => !key.startsWith('_'))
   }
 
   return []

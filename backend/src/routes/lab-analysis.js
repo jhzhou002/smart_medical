@@ -57,7 +57,11 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
 
     const aiResult = await opentenbaseAI.analyzeLabImage(uploadResult.url);
 
-    logger.info('Lab data extracted');
+    logger.info('Lab data extracted', {
+      aiResultType: typeof aiResult,
+      aiResultKeys: aiResult ? Object.keys(aiResult).length : 0,
+      aiResultSample: aiResult ? Object.keys(aiResult).slice(0, 3) : []
+    });
 
     const insertSQL = `
       INSERT INTO patient_lab_data (
@@ -93,7 +97,11 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
       })
     ]);
 
-    logger.info('Lab data saved to database', { id: dbResult.rows[0].id });
+    logger.info('Lab data saved to database', {
+      id: dbResult.rows[0].id,
+      lab_dataType: typeof dbResult.rows[0].lab_data,
+      lab_dataKeys: dbResult.rows[0].lab_data ? Object.keys(dbResult.rows[0].lab_data).length : 0
+    });
 
     const responseData = {
       id: dbResult.rows[0].id,

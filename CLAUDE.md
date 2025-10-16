@@ -5,6 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 注意：开发过程中禁止废话，不是必要禁止创建md文档
 
 ## 开发注意事项
+运行数据库相关脚本必须加载环境配置文件即require('dotenv').config({ path: path.join(__dirname, '../.env') });
+
 
 - 项目情况：
   技术栈：vue+Nodejs+opentenbase（基于PostgreSQL）

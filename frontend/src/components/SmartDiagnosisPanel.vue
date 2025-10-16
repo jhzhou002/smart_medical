@@ -128,9 +128,8 @@
         </div>
         <div class="detail-section" v-if="evidenceDetail.lab || labAnomalies.length">
           <h4>检验</h4>
-          <p v-if="evidenceDetail.lab?.interpretation" class="detail-text">
-            {{ evidenceDetail.lab.interpretation }}
-          </p>
+
+          <!-- 仅显示异常指标（完整的实验室指标详情已在上方展示，此处不重复） -->
           <div v-if="labAnomalies.length" class="anomalies-section">
             <h5 class="anomaly-title">异常指标</h5>
             <el-table
@@ -288,18 +287,28 @@ const textFindings = computed(() => {
 })
 
 const labAnomalies = computed(() => {
-  // 优先使用顶层的 lab_anomalies（从后端新增的查询）
-  if (diagnosisData.value?.lab_anomalies && Array.isArray(diagnosisData.value.lab_anomalies)) {
+  // 优先使用顶层的 lab_anomalies（从后端新增的查询），但必须有数据
+  if (diagnosisData.value?.lab_anomalies &&
+      Array.isArray(diagnosisData.value.lab_anomalies) &&
+      diagnosisData.value.lab_anomalies.length > 0) {
     return diagnosisData.value.lab_anomalies
   }
 
+  // 尝试从 evidence_detail 中获取
   const detail = evidenceDetail.value
-  if (detail?.lab_anomalies && Array.isArray(detail.lab_anomalies)) {
+  if (detail?.lab_anomalies &&
+      Array.isArray(detail.lab_anomalies) &&
+      detail.lab_anomalies.length > 0) {
     return detail.lab_anomalies
   }
-  if (diagnosisData.value?.anomalies && Array.isArray(diagnosisData.value.anomalies)) {
+
+  // 兼容旧的 anomalies 字段
+  if (diagnosisData.value?.anomalies &&
+      Array.isArray(diagnosisData.value.anomalies) &&
+      diagnosisData.value.anomalies.length > 0) {
     return diagnosisData.value.anomalies
   }
+
   return []
 })
 

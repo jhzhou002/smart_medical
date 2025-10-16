@@ -542,6 +542,9 @@ const beforeLabUpload = async (file) => {
     labStatus.value = '分析完成'
 
     if (response.success) {
+      console.log('实验室指标上传成功，返回数据:', response.data)
+      console.log('lab_data 字段:', response.data.lab_data)
+      console.log('lab_data 类型:', typeof response.data.lab_data)
       labResult.value = response.data
       ElMessage.success('实验室指标分析完成')
     }
@@ -568,16 +571,29 @@ const handleUploadError = (error) => {
 
 // 格式化实验室数据
 const formatLabData = (labJson) => {
-  if (!labJson) return []
+  if (!labJson) {
+    console.log('[formatLabData] labJson 为空')
+    return []
+  }
 
-  return Object.entries(labJson)
+  console.log('[formatLabData] 输入数据:', labJson)
+  console.log('[formatLabData] 数据类型:', typeof labJson)
+  console.log('[formatLabData] 数据键:', Object.keys(labJson))
+
+  const result = Object.entries(labJson)
     .filter(([name]) => !name.startsWith('_'))
     .map(([name, data]) => ({
       name,
+      abbreviation: data.abbreviation || '-',
       value: data.value,
       unit: data.unit,
       reference: data.reference
     }))
+
+  console.log('[formatLabData] 格式化结果:', result)
+  console.log('[formatLabData] 结果数量:', result.length)
+
+  return result
 }
 
 // 生成综合诊断
@@ -590,18 +606,49 @@ const generateDiagnosis = async () => {
   diagnosisLoading.value = true
 
   try {
-    const response = await api.post('/db-analysis/smart-diagnosis', {
+    // 创建诊断任务
+    const createResponse = await api.post('/db-analysis/smart-diagnosis', {
       patient_id: selectedPatient.value.patient_id
     })
 
-    if (response.success) {
-      diagnosisResult.value = response.data
-      ElMessage.success('综合诊断生成成功')
+    if (!createResponse.success) {
+      ElMessage.error('创建诊断任务失败')
+      return
     }
+
+    const taskId = createResponse.data.task_id
+    ElMessage.info('诊断任务已创建，正在分析中...')
+
+    // 轮询检查任务状态
+    const checkInterval = setInterval(async () => {
+      try {
+        const statusResponse = await api.get(`/db-analysis/smart-diagnosis/${selectedPatient.value.patient_id}`)
+
+        if (statusResponse.success && statusResponse.data) {
+          // 任务完成
+          clearInterval(checkInterval)
+          diagnosisResult.value = statusResponse.data
+          diagnosisLoading.value = false
+          ElMessage.success('综合诊断生成成功')
+        }
+      } catch (error) {
+        // 继续轮询，忽略错误
+        console.log('轮询诊断状态:', error.message)
+      }
+    }, 2000) // 每2秒检查一次
+
+    // 30秒超时
+    setTimeout(() => {
+      if (diagnosisLoading.value) {
+        clearInterval(checkInterval)
+        diagnosisLoading.value = false
+        ElMessage.warning('诊断任务超时，请稍后查看诊断报告页面')
+      }
+    }, 30000)
+
   } catch (error) {
     console.error('生成诊断失败:', error)
     ElMessage.error(error.response?.data?.message || '生成诊断失败')
-  } finally {
     diagnosisLoading.value = false
   }
 }

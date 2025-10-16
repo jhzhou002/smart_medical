@@ -50,7 +50,7 @@
       </div>
 
       <!-- 实验室指标 -->
-      <div v-if="labData && labData.lab_json" class="section lab-section" data-page-section="lab">
+      <div v-if="labData && labData.lab_data" class="section lab-section" data-page-section="lab">
         <h2 class="section-title">🧪 实验室指标</h2>
         <div class="lab-table-wrapper">
           <table class="lab-table">
@@ -65,7 +65,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="item in formatLabData(labData.lab_json)" :key="item.name">
+              <tr v-for="item in formatLabData(labData.lab_data)" :key="item.name">
                 <td>{{ item.name }}</td>
                 <td>{{ item.abbreviation }}</td>
                 <td>{{ item.value }}</td>
@@ -260,7 +260,7 @@ const formatLabData = (labJson) => {
     try {
       data = JSON.parse(labJson)
     } catch (e) {
-      console.error('Failed to parse lab_json:', e)
+      console.error('Failed to parse lab_data:', e)
       return []
     }
   }

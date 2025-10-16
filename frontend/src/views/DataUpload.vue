@@ -185,7 +185,7 @@
         <div v-if="analysisStore.labAnalysis" class="mt-4">
           <EditableLabTable
             label="实验室检测指标"
-            :model-value="formatLabData(analysisStore.labAnalysis.lab_json)"
+            :model-value="formatLabData(analysisStore.labAnalysis.lab_data)"
             @save="handleSaveLabData"
           />
         </div>
@@ -378,11 +378,11 @@ const handleSaveLabData = async (newLabData) => {
     })
 
     const response = await api.put(`/lab-analysis/${analysisStore.labAnalysis.id}`, {
-      lab_json: labJson
+      lab_data: labJson
     })
 
     if (response.success) {
-      analysisStore.labAnalysis.lab_json = labJson
+      analysisStore.labAnalysis.lab_data = labJson
       ElMessage.success('实验室指标已更新')
     }
   } catch (error) {

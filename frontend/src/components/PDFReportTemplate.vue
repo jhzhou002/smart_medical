@@ -64,7 +64,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="item in formatLabData(data.labData.lab_json)" :key="item.name">
+              <tr v-for="item in formatLabData(data.labData.lab_data)" :key="item.name">
                 <td>{{ item.name }}</td>
                 <td>{{ item.abbreviation }}</td>
                 <td>{{ item.value }}</td>

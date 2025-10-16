@@ -207,9 +207,9 @@ router.get('/smart-diagnosis/:patient_id', async (req, res, next) => {
     if (diagnosis.evidence_detail) {
       const detail = diagnosis.evidence_detail;
 
-      // 移除完整的实验室指标数据，只保留解读和异常信息
+      // 保留 lab_data 字段，移除其他冗余字段
       if (detail.lab) {
-        const { lab_json, indicators, indicator_json, data, values, ...labRest } = detail.lab;
+        const { indicators, indicator_json, data, values, ...labRest } = detail.lab;
         diagnosis.evidence_detail.lab = labRest;
       }
     }
@@ -541,9 +541,9 @@ router.get('/comprehensive/:patient_id', async (req, res, next) => {
         diagnosis.warnings = diagnosis.warnings.split('\n').filter(line => line.trim());
       }
 
-      // 移除完整的实验室指标数据
+      // 保留 lab_data 字段，移除其他冗余字段
       if (diagnosis.evidence_detail && diagnosis.evidence_detail.lab) {
-        const { lab_json, indicators, indicator_json, data, values, ...labRest } = diagnosis.evidence_detail.lab;
+        const { indicators, indicator_json, data, values, ...labRest } = diagnosis.evidence_detail.lab;
         diagnosis.evidence_detail.lab = labRest;
       }
 
