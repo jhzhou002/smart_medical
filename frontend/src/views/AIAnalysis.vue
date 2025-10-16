@@ -225,9 +225,9 @@
           <el-button type="success" :icon="Document" @click="viewFullReport">
             查看完整报告
           </el-button>
-          <el-button type="primary" :icon="TrendCharts" @click="goToAdvancedAnalysis">
+          <!-- <el-button type="primary" :icon="TrendCharts" @click="goToAdvancedAnalysis">
             高级多模态分析
-          </el-button>
+          </el-button> -->
         </div>
       </div>
     </div>
