@@ -6,7 +6,11 @@
   "scripts": {
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
-    "test": "jest --coverage",
+    "test": "jest --config __tests__/jest.config.js --coverage",
+    "test:unit": "jest __tests__/unit --config __tests__/jest.config.js",
+    "test:integration": "jest __tests__/integration --config __tests__/jest.config.js",
+    "test:watch": "jest --watch --config __tests__/jest.config.js",
+    "test:coverage": "jest --config __tests__/jest.config.js --coverage --coverageReporters=html",
     "lint": "eslint src/**/*.js"
   },
   "keywords": [

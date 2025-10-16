@@ -118,60 +118,63 @@ app.use(errorHandler);
 // 服务器启动
 // ==========================================
 
-const server = app.listen(PORT, () => {
-  logger.info('===========================================');
-  logger.info(`🚀 服务器启动成功!`);
-  logger.info(`📍 地址: http://127.0.0.1:${PORT}`);
-  logger.info(`📊 数据库: ${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`);
-  logger.info(`🌐 环境: ${process.env.NODE_ENV || 'development'}`);
-  logger.info('===========================================');
-});
-
-// ==========================================
-// 优雅关闭
-// ==========================================
-
-const gracefulShutdown = async (signal) => {
-  logger.info(`收到 ${signal} 信号，正在关闭服务器...`);
-
-  // 关闭 HTTP 服务器
-  server.close(async () => {
-    logger.info('HTTP 服务器已关闭');
-
-    try {
-      // 关闭数据库连接池
-      await db.closePool();
-      logger.info('数据库连接池已关闭');
-
-      logger.info('✓ 服务器已优雅关闭');
-      process.exit(0);
-    } catch (error) {
-      logger.error('关闭服务器时发生错误:', error);
-      process.exit(1);
-    }
+// 只在非测试环境下启动服务器
+if (process.env.NODE_ENV !== 'test') {
+  const server = app.listen(PORT, () => {
+    logger.info('===========================================');
+    logger.info(`🚀 服务器启动成功!`);
+    logger.info(`📍 地址: http://127.0.0.1:${PORT}`);
+    logger.info(`📊 数据库: ${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`);
+    logger.info(`🌐 环境: ${process.env.NODE_ENV || 'development'}`);
+    logger.info('===========================================');
   });
 
-  // 设置超时,强制关闭
-  setTimeout(() => {
-    logger.error('无法优雅关闭，强制退出');
-    process.exit(1);
-  }, 10000);
-};
+  // ==========================================
+  // 优雅关闭
+  // ==========================================
 
-// 监听退出信号
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  const gracefulShutdown = async (signal) => {
+    logger.info(`收到 ${signal} 信号，正在关闭服务器...`);
 
-// 未捕获的异常
-process.on('uncaughtException', (error) => {
-  logger.error('未捕获的异常:', error);
-  gracefulShutdown('uncaughtException');
-});
+    // 关闭 HTTP 服务器
+    server.close(async () => {
+      logger.info('HTTP 服务器已关闭');
 
-// 未处理的 Promise 拒绝
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('未处理的 Promise 拒绝:', { reason, promise });
-});
+      try {
+        // 关闭数据库连接池
+        await db.closePool();
+        logger.info('数据库连接池已关闭');
+
+        logger.info('✓ 服务器已优雅关闭');
+        process.exit(0);
+      } catch (error) {
+        logger.error('关闭服务器时发生错误:', error);
+        process.exit(1);
+      }
+    });
+
+    // 设置超时,强制关闭
+    setTimeout(() => {
+      logger.error('无法优雅关闭，强制退出');
+      process.exit(1);
+    }, 10000);
+  };
+
+  // 监听退出信号
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+  // 未捕获的异常
+  process.on('uncaughtException', (error) => {
+    logger.error('未捕获的异常:', error);
+    gracefulShutdown('uncaughtException');
+  });
+
+  // 未处理的 Promise 拒绝
+  process.on('unhandledRejection', (reason, promise) => {
+    logger.error('未处理的 Promise 拒绝:', { reason, promise });
+  });
+}
 
 module.exports = app;
 

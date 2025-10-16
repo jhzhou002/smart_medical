@@ -1,0 +1,23 @@
+[
+  {
+    "name": "张三",
+    "age": 45,
+    "gender": "男",
+    "phone": "13800138000",
+    "first_visit": true
+  },
+  {
+    "name": "李四",
+    "age": 32,
+    "gender": "女",
+    "phone": "13900139000",
+    "first_visit": false
+  },
+  {
+    "name": "王五",
+    "age": 58,
+    "gender": "男",
+    "phone": "13700137000",
+    "first_visit": true
+  }
+]
